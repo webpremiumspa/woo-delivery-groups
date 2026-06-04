@@ -1,0 +1,950 @@
+/* WooCommerce Delivery Groups — Admin Styles */
+
+.wdg-wrap { max-width: 100%; }
+.wdg-wrap h1 { font-size: 22px; margin-bottom: 4px; }
+.wdg-sub { color: #666; margin-bottom: 16px; font-size: 13px; }
+
+/* Layout 2 columnas */
+.wdg-layout {
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    gap: 20px;
+    align-items: start;
+}
+
+/* Panel izquierdo */
+.wdg-panel { display: flex; flex-direction: column; gap: 16px; }
+
+/* Cards */
+.wdg-card {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 16px 18px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.06);
+}
+.wdg-card h2 {
+    font-size: 13px;
+    font-weight: 700;
+    margin: 0 0 14px;
+    text-transform: uppercase;
+    letter-spacing: .4px;
+    color: #23282d;
+}
+.wdg-divider { border: none; border-top: 1px solid #eee; margin: 12px 0; }
+
+/* Campos */
+.wdg-field { margin-bottom: 12px; display: flex; flex-direction: column; gap: 4px; }
+.wdg-field label { font-size: 12px; font-weight: 600; color: #444; }
+.wdg-field input[type="date"],
+.wdg-field input[type="number"],
+.wdg-field input[type="text"],
+.wdg-field select { width: 100%; }
+.wdg-hint { font-weight: normal; color: #888; font-size: 11px; }
+
+/* Botón principal */
+#btnProcess { width: 100%; justify-content: center; margin-top: 4px; }
+.wdg-spinner { font-size: 13px; color: #0369a1; margin-top: 8px; text-align: center; }
+
+/* Stats */
+.wdg-stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.wdg-stat {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    padding: 10px 12px;
+    text-align: center;
+}
+.wdg-stat-val { font-size: 20px; font-weight: 700; color: #2271b1; }
+.wdg-stat-lbl { font-size: 11px; color: #64748b; margin-top: 2px; }
+.wdg-stat--warn .wdg-stat-val { color: #d97706; }
+.wdg-stat--ok   .wdg-stat-val { color: #16a34a; }
+
+/* Lista de grupos */
+.wdg-group-item {
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    margin-bottom: 10px;
+    overflow: hidden;
+}
+.wdg-group-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    cursor: pointer;
+    user-select: none;
+}
+.wdg-group-header:hover { background: #f8fafc; }
+.wdg-group-dot {
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+.wdg-group-title { font-weight: 600; font-size: 13px; flex: 1; }
+.wdg-group-badge {
+    background: #e2e8f0;
+    color: #475569;
+    border-radius: 20px;
+    padding: 1px 8px;
+    font-size: 11px;
+    font-weight: 600;
+}
+.wdg-group-toggle { color: #94a3b8; font-size: 11px; }
+
+.wdg-group-body {
+    display: none;
+    border-top: 1px solid #e2e8f0;
+    padding: 0;
+}
+.wdg-group-body.open { display: block; }
+
+.wdg-group-actions {
+    padding: 8px 12px;
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+
+.wdg-order-row:last-child { border-bottom: none; }
+.wdg-order-id { font-family: monospace; font-weight: 600; color: #2271b1; }
+.wdg-order-addr { color: #374151; line-height: 1.4; }
+.wdg-order-customer { font-size: 11px; color: #6b7280; }
+.wdg-order-phone { font-size: 11px; color: #6b7280; font-family: monospace; }
+
+/* Mapa */
+.wdg-map-wrap {
+    position: sticky;
+    top: 32px;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 2px 8px rgba(0,0,0,.12);
+}
+#wdgMap { width: 100%; height: calc(100vh - 120px); min-height: 500px; }
+
+/* Leyenda del mapa */
+.wdg-map-legend {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background: rgba(255,255,255,.95);
+    border-radius: 6px;
+    padding: 10px 14px;
+    font-size: 12px;
+    box-shadow: 0 2px 6px rgba(0,0,0,.15);
+    max-width: 180px;
+    z-index: 10;
+}
+.wdg-map-legend h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .4px; margin: 0 0 8px; color: #444; }
+.wdg-legend-item { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; font-size: 12px; }
+.wdg-legend-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+
+/* Print styles */
+@media print {
+    .wdg-panel, .wdg-map-wrap { display: none !important; }
+    .wdg-print-section { display: block !important; }
+}
+.wdg-print-section { display: none; }
+
+/* Número de parada */
+.wdg-order-row {
+    display: grid;
+    grid-template-columns: 28px 55px 1fr auto;
+    gap: 6px;
+    padding: 7px 12px;
+    font-size: 12px;
+    border-bottom: 1px solid #f1f5f9;
+    align-items: center;
+}
+.wdg-order-stop {
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+/* Botón Google Maps */
+.wdg-btn-maps {
+    background: #4285F4 !important;
+    color: #fff !important;
+    border-color: #3367d6 !important;
+    text-decoration: none !important;
+}
+.wdg-btn-maps:hover { background: #3367d6 !important; }
+
+/* Fila dedicada para botón Google Maps */
+.wdg-group-maps-row {
+    padding: 8px 12px;
+    background: #f0f7ff;
+    border-bottom: 1px solid #dbeafe;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+.wdg-maps-unavailable {
+    font-size: 11px;
+    color: #d97706;
+}
+
+/* Botón Google Maps en el header del grupo — siempre visible */
+.wdg-btn-maps-header {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 10px;
+    background: #4285F4;
+    color: #fff !important;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    text-decoration: none !important;
+    white-space: nowrap;
+    line-height: 1.4;
+    margin-right: 4px;
+}
+.wdg-btn-maps-header:hover {
+    background: #3367d6;
+    color: #fff !important;
+}
+
+/* ── Versión badge ─────────────────────────────────── */
+.wdg-version-badge {
+    font-size: 12px;
+    font-weight: normal;
+    background: #f0f0f1;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    padding: 2px 8px;
+    margin-left: 8px;
+    vertical-align: middle;
+    font-family: monospace;
+    color: #555;
+}
+
+/* ── Card bodega ───────────────────────────────────── */
+.wdg-card--depot { border-left: 4px solid #1a1a2e; }
+.wdg-card-desc { font-size: 12px; color: #666; margin: -8px 0 12px; }
+.wdg-depot-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.wdg-depot-row input { flex: 1; min-width: 200px; }
+.wdg-depot-status { font-size: 12px; margin-top: 6px; }
+.wdg-depot-ok   { color: #15803d; }
+.wdg-depot-warn { color: #d97706; }
+.wdg-depot-ok code { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 3px; padding: 1px 5px; font-size: 11px; margin-left: 4px; }
+
+/* ── Desglose km ───────────────────────────────────── */
+.wdg-km-breakdown {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    padding: 8px 12px;
+    background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0;
+    font-size: 11px;
+    color: #475569;
+}
+.wdg-km-total { font-weight: 700; color: #1e40af; }
+
+/* ── Fila de bodega en lista ───────────────────────── */
+.wdg-depot-row-item {
+    background: #f0fdf4 !important;
+    border-bottom: 1px solid #bbf7d0 !important;
+}
+.wdg-depot-stop {
+    background: #1a1a2e !important;
+    font-size: 14px;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* ── Dirección clickeable ──────────────────────────── */
+.wdg-addr-link {
+    color: #1d4ed8;
+    text-decoration: none;
+    cursor: pointer;
+    border-bottom: 1px dashed #93c5fd;
+    transition: color .15s, border-color .15s;
+}
+.wdg-addr-link:hover {
+    color: #1e40af;
+    border-bottom-style: solid;
+    border-bottom-color: #1e40af;
+}
+
+/* ── Botones K (número de grupos) ─────────────────── */
+.wdg-btn-group {
+    display: flex;
+    gap: 6px;
+}
+.wdg-kbtn {
+    width: 38px;
+    height: 38px;
+    border: 2px solid #ddd;
+    background: #fff;
+    border-radius: 6px;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    color: #444;
+    transition: all .15s;
+    padding: 0;
+    line-height: 1;
+}
+.wdg-kbtn:hover {
+    border-color: #2271b1;
+    color: #2271b1;
+    background: #f0f6fc;
+}
+.wdg-kbtn--active {
+    background: #2271b1 !important;
+    border-color: #2271b1 !important;
+    color: #fff !important;
+}
+
+/* ── Botón Link conductor ──────────────────────────── */
+.wdg-btn-link {
+    background: #e8f4e8 !important;
+    color: #15803d !important;
+    border-color: #86efac !important;
+    font-weight: 600 !important;
+}
+.wdg-btn-link:hover {
+    background: #dcfce7 !important;
+    border-color: #4ade80 !important;
+}
+
+/* ── Caja del link generado ────────────────────────── */
+.wdg-link-row {
+    border-top: 1px solid #e2e8f0;
+    background: #f8fafc;
+}
+.wdg-link-box {
+    padding: 10px 12px;
+}
+.wdg-link-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #15803d;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.wdg-link-expiry {
+    font-weight: normal;
+    color: #64748b;
+    font-size: 11px;
+}
+.wdg-link-url-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+.wdg-link-input {
+    flex: 1;
+    min-width: 140px;
+    font-family: monospace;
+    font-size: 11px;
+    padding: 5px 8px !important;
+    background: #fff;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    color: #374151;
+}
+.wdg-copy-btn {
+    white-space: nowrap;
+    font-size: 12px !important;
+}
+
+/* ── Panel de progreso en tiempo real ─────────── */
+.wdg-prog-group {
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin-bottom: 12px;
+}
+.wdg-prog-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+.wdg-prog-dot {
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+.wdg-prog-name  { font-weight: 600; font-size: 13px; flex: 1; }
+.wdg-prog-pct   { font-size: 12px; font-weight: 700; color: #1e40af; }
+.wdg-prog-bar-wrap {
+    background: #e5e7eb;
+    border-radius: 20px;
+    height: 8px;
+    overflow: hidden;
+    margin-bottom: 4px;
+}
+.wdg-prog-bar-fill {
+    height: 100%;
+    border-radius: 20px;
+    transition: width .5s;
+}
+.wdg-prog-updated {
+    font-size: 10px;
+    color: #94a3b8;
+    margin-bottom: 10px;
+}
+.wdg-prog-stops {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: 220px;
+    overflow-y: auto;
+    border-top: 1px solid #f1f5f9;
+    padding-top: 8px;
+}
+.wdg-prog-stops::-webkit-scrollbar { width: 3px; }
+.wdg-prog-stops::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 3px; }
+.wdg-stop-row {
+    display: grid;
+    grid-template-columns: 20px 24px 1fr auto;
+    gap: 6px;
+    padding: 3px 0;
+    font-size: 12px;
+    align-items: center;
+    border-bottom: 1px solid #f8f9fa;
+}
+.wdg-stop-row.wdg-stop-done {
+    opacity: .55;
+    text-decoration: line-through;
+}
+.wdg-stop-icon { font-size: 13px; }
+.wdg-stop-num  { font-weight: 600; color: #64748b; text-align: center; }
+.wdg-stop-addr { color: #374151; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wdg-stop-customer { font-size: 11px; color: #9ca3af; white-space: nowrap; }
+
+/* ── Toggle excluir entregados ─────────────────── */
+.wdg-toggle-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    cursor: pointer;
+    font-weight: normal;
+}
+.wdg-toggle-label input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+    accent-color: #2271b1;
+}
+
+/* ── Badge entregado en tabla ──────────────────── */
+.wdg-delivered-badge {
+    display: inline-block;
+    background: #dcfce7;
+    color: #15803d;
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 10px;
+    font-weight: 600;
+    margin-left: 4px;
+    vertical-align: middle;
+}
+
+/* ══ PESTAÑAS ══════════════════════════════════════════════════════════════ */
+.wdg-tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 2px solid #ddd;
+    margin-bottom: 20px;
+}
+.wdg-tab {
+    padding: 10px 20px;
+    font-size: 14px;
+    font-weight: 500;
+    color: #555;
+    text-decoration: none;
+    border-bottom: 3px solid transparent;
+    margin-bottom: -2px;
+    transition: color .15s, border-color .15s;
+}
+.wdg-tab:hover { color: #2271b1; }
+.wdg-tab--active { color: #2271b1; border-bottom-color: #2271b1; font-weight: 600; }
+
+/* ══ LISTA DE PLANIFICACIONES ═════════════════════════════════════════════ */
+.wdg-plans-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+.wdg-plans-empty {
+    text-align: center;
+    padding: 48px 24px;
+    color: #64748b;
+    background: #fff;
+    border: 1px dashed #ddd;
+    border-radius: 8px;
+}
+.wdg-plans-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 16px;
+}
+.wdg-plan-card {
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.05);
+    transition: box-shadow .2s;
+}
+.wdg-plan-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,.1); }
+.wdg-plan-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 10px;
+}
+.wdg-plan-name  { font-size: 15px; font-weight: 600; color: #1e293b; }
+.wdg-plan-status { font-size: 12px; color: #64748b; }
+.wdg-plan-meta  {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 12px;
+    font-size: 12px;
+    color: #64748b;
+    margin-bottom: 10px;
+}
+.wdg-plan-progress { margin-bottom: 12px; }
+.wdg-plan-bar-wrap {
+    background: #e5e7eb;
+    border-radius: 20px;
+    height: 6px;
+    overflow: hidden;
+    margin-bottom: 4px;
+}
+.wdg-plan-bar-fill { height: 100%; border-radius: 20px; transition: width .4s; }
+.wdg-plan-pct   { font-size: 11px; color: #64748b; }
+.wdg-plan-actions {
+    display: flex;
+    gap: 8px;
+    border-top: 1px solid #f1f5f9;
+    padding-top: 12px;
+}
+
+/* ══ GUARDAR PLAN ════════════════════════════════════════════════════════ */
+.wdg-save-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+/* ── Paginación de planes ──────────────────────── */
+.wdg-plans-pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid #e2e8f0;
+}
+
+/* ── Log panel ─────────────────────────────────── */
+.wdg-card--log { border-left: 4px solid #6366f1; }
+.wdg-log-panel { max-height: 400px; overflow-y: auto; }
+.wdg-log-table { width:100%; border-collapse:collapse; font-size:12px; font-family:monospace; }
+.wdg-log-table th { background:#f8fafc; padding:6px 10px; text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.3px; border-bottom:2px solid #e2e8f0; position:sticky; top:0; }
+.wdg-log-table td { padding:5px 10px; border-bottom:1px solid #f1f5f9; vertical-align:top; }
+.wdg-log-table tr.log-ok   td:first-child { border-left: 3px solid #4caf50; }
+.wdg-log-table tr.log-err  td:first-child { border-left: 3px solid #e53e3e; }
+.wdg-log-table tr.log-warn td:first-child { border-left: 3px solid #f59e0b; }
+.wdg-log-table tr.log-info td:first-child { border-left: 3px solid #3b82f6; }
+.log-badge { display:inline-block; padding:1px 6px; border-radius:4px; font-size:10px; font-weight:700; }
+.log-badge.log-ok   { background:#dcfce7; color:#15803d; }
+.log-badge.log-err  { background:#fee2e2; color:#b91c1c; }
+.log-badge.log-warn { background:#fef3c7; color:#92400e; }
+.log-badge.log-info { background:#dbeafe; color:#1e40af; }
+.log-ctx { font-size:10px; margin:4px 0 0; background:#f8fafc; border:1px solid #e2e8f0; border-radius:4px; padding:4px 6px; max-width:300px; overflow:auto; white-space:pre; }
+
+/* ── Log tab (ancho completo) ──────────────────── */
+.wdg-log-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+.wdg-log-panel-full {
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    overflow: auto;
+    min-height: 200px;
+    max-height: calc(100vh - 260px);
+    padding: 8px;
+}
+.wdg-log-panel-full .wdg-log-table {
+    width: 100%;
+}
+.wdg-log-panel-full .log-ctx {
+    max-width: 500px;
+}
+
+/* ── Panel de repartidores ─────────────────────── */
+.wdg-quota-info {
+    font-size: 13px;
+    color: #374151;
+    margin-bottom: 14px;
+    padding: 8px 12px;
+    background: #f0f9ff;
+    border-radius: 6px;
+    border-left: 3px solid #0ea5e9;
+}
+.wdg-rep-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 0;
+    border-bottom: 1px solid #f1f5f9;
+}
+.wdg-rep-row:last-child { border-bottom: none; }
+.wdg-rep-name {
+    flex: 1;
+    font-size: 13px;
+    font-weight: 500;
+    color: #374151;
+}
+.wdg-rep-quota {
+    width: 56px !important;
+    text-align: center;
+    font-weight: 700;
+    font-size: 14px !important;
+    padding: 4px 4px !important;
+    border-radius: 6px !important;
+    flex-shrink: 0;
+}
+.wdg-rep-unit {
+    font-size: 12px;
+    color: #9ca3af;
+    white-space: nowrap;
+}
+.wdg-quota-total {
+    font-size: 13px;
+    font-weight: 500;
+    padding: 8px 12px;
+    border-radius: 6px;
+    margin-top: 10px;
+}
+.wdg-quota-total.ok  { background: #dcfce7; color: #15803d; }
+.wdg-quota-total.err { background: #fee2e2; color: #b91c1c; }
+
+/* ── Modal mover pedido ────────────────────────── */
+#wdg-move-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.45);
+    z-index: 99999;
+    align-items: center;
+    justify-content: center;
+}
+#wdg-move-overlay.open { display: flex; }
+#wdg-move-box {
+    background: #fff;
+    border-radius: 10px;
+    padding: 20px 24px;
+    width: 380px;
+    max-width: 95vw;
+    box-shadow: 0 8px 32px rgba(0,0,0,.18);
+}
+#wdg-move-box h3 { font-size: 14px; font-weight: 600; margin: 0 0 4px; }
+#wdg-move-box .wdg-move-addr { font-size: 12px; color: #64748b; margin: 0 0 16px; }
+.wdg-move-groups { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.wdg-move-btn {
+    padding: 8px 16px;
+    border-radius: 6px;
+    border: 2px solid #ddd;
+    background: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all .15s;
+}
+.wdg-move-btn:hover { border-color: #2271b1; color: #2271b1; }
+.wdg-move-btn.selected { background: #2271b1; border-color: #2271b1; color: #fff; }
+.wdg-move-btn.current { opacity: .4; cursor: default; pointer-events: none; }
+.wdg-move-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.wdg-move-actions { display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid #f1f5f9; padding-top: 14px; }
+
+/* ══ REPARTIDORES ══════════════════════════════════════════════════════════ */
+.wdg-drivers-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+.wdg-drivers-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+}
+.wdg-driver-card {
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    padding: 16px;
+    transition: box-shadow .2s;
+}
+.wdg-driver-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,.08); }
+.wdg-driver-card.inactive { opacity: .55; }
+.wdg-driver-card-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+.wdg-driver-avatar {
+    width: 42px; height: 42px;
+    border-radius: 50%;
+    background: #2271b1;
+    color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; font-weight: 700;
+    flex-shrink: 0;
+}
+.wdg-driver-info { flex: 1; min-width: 0; }
+.wdg-driver-name  { font-size: 14px; font-weight: 600; color: #1e293b; }
+.wdg-driver-alias { font-size: 12px; color: #64748b; }
+.wdg-driver-badge {
+    font-size: 11px; font-weight: 600;
+    padding: 2px 8px; border-radius: 20px;
+    white-space: nowrap;
+}
+.wdg-driver-badge.active   { background: #dcfce7; color: #15803d; }
+.wdg-driver-badge.inactive { background: #f1f5f9; color: #64748b; }
+.wdg-driver-attrs {
+    font-size: 12px; color: #64748b;
+    display: flex; flex-direction: column; gap: 3px;
+    margin-bottom: 12px;
+    border-top: 1px solid #f1f5f9;
+    padding-top: 10px;
+}
+.wdg-driver-actions {
+    display: flex; gap: 6px; flex-wrap: wrap;
+    border-top: 1px solid #f1f5f9;
+    padding-top: 10px;
+}
+/* Formulario repartidor */
+.wdg-driver-form { margin-top: 24px; }
+.wdg-driver-fields {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+}
+.wdg-driver-form-actions {
+    display: flex; justify-content: flex-end; gap: 8px;
+    border-top: 1px solid #f1f5f9;
+    padding-top: 14px;
+}
+/* Select en panel de repartidores */
+.wdg-rep-select {
+    flex: 2 1 0;
+    min-width: 0;
+    font-size: 12px !important;
+    padding: 5px 4px !important;
+    border-radius: 6px !important;
+    border: 1px solid #d1d5db !important;
+    height: 36px;
+}
+
+/* ══ ANÁLISIS ══════════════════════════════════════════════════════════════ */
+.wdg-analytics-toolbar { margin-bottom: 16px; }
+.wdg-analytics-filters { margin-bottom: 20px; }
+.wdg-filter-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: flex-start;
+}
+.wdg-filter-row .wdg-field { min-width: 140px; flex: 1; }
+.wdg-kpi-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+    gap: 12px;
+    margin-bottom: 20px;
+}
+/* Tabla análisis */
+.wdg-an-table-wrap {
+    overflow-x: auto;
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+}
+.wdg-an-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    min-width: 900px;
+}
+.wdg-an-table th {
+    background: #f8fafc;
+    padding: 8px 12px;
+    text-align: left;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .3px;
+    border-bottom: 2px solid #e2e8f0;
+    position: sticky;
+    top: 0;
+    white-space: nowrap;
+}
+.wdg-an-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid #f1f5f9;
+    vertical-align: top;
+}
+.wdg-an-table tr:hover td { background: #f8fafc; }
+/* Badges de estado */
+.wdg-an-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.wdg-an-badge.delivered   { background: #dcfce7; color: #15803d; }
+.wdg-an-badge.partial     { background: #fef3c7; color: #92400e; }
+.wdg-an-badge.not-visited { background: #fee2e2; color: #b91c1c; }
+.wdg-an-badge.assigned    { background: #dbeafe; color: #1e40af; }
+
+/* ── Nombre repartidor en grupo ──────────────────────────── */
+.wdg-group-title-wrap { display:flex; align-items:center; }
+.wdg-group-driver { font-size:13px; color:#64748b; font-weight:400; }
+
+/* ── Plan ID badge ──────────────────────────── */
+.wdg-plan-id {
+    font-size: 10px;
+    font-family: monospace;
+    color: #94a3b8;
+    background: #f1f5f9;
+    border-radius: 4px;
+    padding: 2px 6px;
+    margin-right: 6px;
+}
+.wdg-plan-id-small {
+    font-size: 10px;
+    font-family: monospace;
+    color: #94a3b8;
+    white-space: nowrap;
+}
+
+/* ── Select vehículo en panel de repartidores ─── */
+.wdg-veh-select {
+    flex: 1.5 1 0;
+    min-width: 0;
+    font-size: 12px !important;
+    padding: 5px 4px !important;
+    border-radius: 6px !important;
+    border: 1px solid #d1d5db !important;
+    height: 36px;
+}
+
+/* ── Badges licencia conductor ──────────────────── */
+.wdg-lic-badge {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 5px;
+    margin-bottom: 4px;
+}
+.wdg-lic-badge.ok {
+    background: #dcfce7;
+    color: #15803d;
+}
+.wdg-lic-badge.warning {
+    background: #fef3c7;
+    color: #92400e;
+}
+.wdg-lic-badge.expired {
+    background: #fee2e2;
+    color: #b91c1c;
+}
+
+/* ══ CONFIGURACIÓN ══════════════════════════════════════════════════════════ */
+.wdg-config-section { max-width: 700px; }
+.wdg-config-api-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+}
+.wdg-config-api-row .regular-text { flex: 1; min-width: 260px; }
+.wdg-config-status { font-size: 13px; }
+
+/* ── Inline link en cabecera de grupo ───────────────────────────────────── */
+.wdg-inline-link-box {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+    border-radius: 6px;
+    padding: 5px 8px;
+    flex-wrap: nowrap;
+}
+.wdg-inline-link-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #15803d;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+.wdg-inline-link-box .wdg-link-input-0,
+.wdg-inline-link-box input[type="text"] {
+    flex: 1;
+    font-size: 11px;
+    min-width: 0;
+    color: #374151;
+    background: transparent;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+}
+
+/* ── Config toggle row ──────────────────────────────────────────────────── */
+.wdg-config-toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+}
