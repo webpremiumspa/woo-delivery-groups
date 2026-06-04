@@ -155,7 +155,7 @@ jQuery(document).ready(function ($) {
                           exclude_delivered: '0' };
 
         $('#btnSearch').prop('disabled', true).text('Buscando…');
-        $('#wdgStatsCard, #wdgGroupsCard, #wdgSavePlanCard, #wdgProgressCard, #wdgRepartidoresCard').hide();
+        $('#wdgStatsCard, #wdgGroupsCard, #wdgSavePlanCard, #wdgProgressCard, #wdgRepartidoresCard, #wdgAddOrdersCard').hide();
         // Limpiar mapa y estado previo
         clearMap();
         window.wdgOrders  = [];
@@ -1006,6 +1006,7 @@ var ok = confirm('⚠️ Importante: Al guardar la planificación, los pedidos q
                 planIsSaved   = true;
                 $('#wdgSavePlanStatus').html('<span style="color:#15803d">✅ Planificación guardada: <strong>' + escHtml(res.data.name) + '</strong></span>');
                 $('#btnSavePlan').text('💾 Actualizar');
+                $('#wdgAddOrdersCard').show();
             } else {
                 $('#wdgSavePlanStatus').html('<span style="color:#b91c1c">❌ ' + escHtml(res.data) + '</span>');
             }
@@ -1118,7 +1119,9 @@ var ok = confirm('⚠️ Importante: Al guardar la planificación, los pedidos q
         planIsSaved       = false;
         activeTokens      = {};
         switchTab('new');
-        $('#wdgGroupsCard, #wdgStatsCard, #wdgSavePlanCard, #wdgProgressCard, #wdgRepartidoresCard').hide();
+        $('#wdgGroupsCard, #wdgStatsCard, #wdgSavePlanCard, #wdgProgressCard, #wdgRepartidoresCard, #wdgAddOrdersCard').hide();
+        $('#wdgNewOrdersPanel').hide();
+        $('#wdgAddOrdersStatus').html('');
         $('#wdgPlanName').val('');
         $('#wdgSavePlanStatus').html('');
         $('#btnSavePlan').text('💾 Guardar');
@@ -1209,12 +1212,133 @@ if (g.token) activeTokens[i] = g.token;
             $('#wdgPlanName').val(plan.name);
             $('#btnSavePlan').text('💾 Actualizar');
             $('#wdgSavePlanCard').show();
+            $('#wdgAddOrdersCard').show();
+            $('#wdgNewOrdersPanel').hide();
+            $('#wdgAddOrdersStatus').html('');
 
             // Progreso
             showProgressPanel();
 
             // Cambiar a tab de nueva planificación (donde está el mapa y grupos)
             switchTab('new');
+        });
+    };
+
+    // ══ AÑADIR PEDIDOS NUEVOS A UN PLAN ════════════════════════════════════════
+    var wdgNewOrders = []; // pedidos nuevos detectados, cada uno con .group_idx
+
+    function wdgKm(lat1, lng1, lat2, lng2) {
+        var R = 6371;
+        var dLat = (lat2 - lat1) * Math.PI / 180;
+        var dLng = (lng2 - lng1) * Math.PI / 180;
+        var a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                Math.cos(lat1 * Math.PI/180) * Math.cos(lat2 * Math.PI/180) *
+                Math.sin(dLng/2) * Math.sin(dLng/2);
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
+    // Ruta cuyo centro queda más cerca, respetando el máximo por ruta
+    function wdgNearestGroup(order) {
+        var maxPer = parseInt((currentConfig && currentConfig.max_per_group) || 35);
+        var best = -1, bestD = Infinity;       // con cupo disponible
+        var bestAny = -1, bestAnyD = Infinity; // ignorando cupo (fallback)
+        currentGroups.forEach(function(g, gi) {
+            var c = g.center || {};
+            if (c.lat == null) return;
+            var d = wdgKm(+order.lat, +order.lng, +c.lat, +c.lng);
+            if (d < bestAnyD) { bestAnyD = d; bestAny = gi; }
+            if ((g.count || 0) < maxPer && d < bestD) { bestD = d; best = gi; }
+        });
+        return best >= 0 ? best : (bestAny >= 0 ? bestAny : 0);
+    }
+
+    window.wdgDetectNewOrders = function() {
+        if (!currentPlanId) { alert('Primero carga o guarda una planificación.'); return; }
+        $('#btnDetectNew').prop('disabled', true).text('Buscando…');
+        $('#wdgAddOrdersStatus').html('');
+        $('#wdgNewOrdersPanel').hide();
+
+        $.post(wdgData.ajaxUrl, {
+            action:  'wdg_new_orders',
+            nonce:   wdgData.nonce,
+            plan_id: currentPlanId,
+        }, function(res) {
+            $('#btnDetectNew').prop('disabled', false).text('🔍 Buscar pedidos nuevos');
+            if (!res.success) {
+                $('#wdgAddOrdersStatus').html('<span style="color:#b91c1c">❌ ' + escHtml(res.data) + '</span>');
+                return;
+            }
+            var orders = res.data.orders || [];
+            var rango  = '(rango ' + escHtml(res.data.date_from) + ' → ' + escHtml(res.data.date_to) + ')';
+            if (!orders.length) {
+                $('#wdgAddOrdersStatus').html('<span style="color:#15803d">✅ No hay pedidos nuevos sin asignar ' + rango + '.</span>');
+                return;
+            }
+            // Asignación automática a la ruta más cercana
+            wdgNewOrders = orders.map(function(o) {
+                o.group_idx = wdgNearestGroup(o);
+                return o;
+            });
+            $('#wdgAddOrdersStatus').html('<span style="color:#0369a1"><strong>' + orders.length +
+                '</strong> pedido(s) nuevo(s) ' + rango + '. Revisa la asignación y confirma.</span>');
+            wdgRenderNewOrders();
+            $('#wdgNewOrdersPanel').show();
+        }).fail(function() {
+            $('#btnDetectNew').prop('disabled', false).text('🔍 Buscar pedidos nuevos');
+            $('#wdgAddOrdersStatus').html('<span style="color:#b91c1c">❌ Error de conexión</span>');
+        });
+    };
+
+    function wdgRenderNewOrders() {
+        var html = '<table class="wdg-new-orders-table"><thead><tr>' +
+                   '<th>Pedido</th><th>Dirección</th><th>Ruta asignada</th></tr></thead><tbody>';
+        wdgNewOrders.forEach(function(o, i) {
+            var opts = '';
+            currentGroups.forEach(function(g, gi) {
+                opts += '<option value="' + gi + '"' + (gi === o.group_idx ? ' selected' : '') + '>' +
+                        escHtml(g.name) + ' (' + (g.count || 0) + ')</option>';
+            });
+            var dot = GROUP_COLORS[o.group_idx % GROUP_COLORS.length];
+            html += '<tr>' +
+                    '<td><a href="' + wdgData.adminUrl + 'post.php?post=' + o.id + '&action=edit" target="_blank">#' + o.id + '</a></td>' +
+                    '<td>' + escHtml(o.address) + (o.city ? ', ' + escHtml(o.city) : '') + '</td>' +
+                    '<td><span class="wdg-move-dot" style="background:' + dot + '"></span>' +
+                    '<select class="wdg-new-order-group" data-i="' + i + '">' + opts + '</select></td>' +
+                    '</tr>';
+        });
+        html += '</tbody></table>';
+        $('#wdgNewOrdersList').html(html);
+    }
+
+    $(document).on('change', '.wdg-new-order-group', function() {
+        var i = parseInt($(this).data('i'));
+        wdgNewOrders[i].group_idx = parseInt($(this).val());
+        wdgRenderNewOrders(); // refresca el color del punto
+    });
+
+    window.wdgConfirmAppend = function() {
+        if (!wdgNewOrders.length) return;
+        $('#btnConfirmAppend').prop('disabled', true).text('Reoptimizando…');
+        $.post(wdgData.ajaxUrl, {
+            action:  'wdg_append_orders',
+            nonce:   wdgData.nonce,
+            plan_id: currentPlanId,
+            orders:  JSON.stringify(wdgNewOrders),
+        }, function(res) {
+            $('#btnConfirmAppend').prop('disabled', false).text('✅ Confirmar y reoptimizar');
+            if (!res.success) {
+                $('#wdgAddOrdersStatus').html('<span style="color:#b91c1c">❌ ' + escHtml(res.data) + '</span>');
+                return;
+            }
+            wdgNewOrders = [];
+            $('#wdgNewOrdersPanel').hide();
+            $('#wdgAddOrdersStatus').html('<span style="color:#15803d">✅ ' + res.data.added +
+                ' pedido(s) añadido(s) y rutas reoptimizadas. El enlace del conductor se mantiene.</span>');
+            // Recargar el plan para reflejar grupos, mapa y progreso actualizados
+            window.wdgLoadPlan(currentPlanId);
+        }).fail(function() {
+            $('#btnConfirmAppend').prop('disabled', false).text('✅ Confirmar y reoptimizar');
+            $('#wdgAddOrdersStatus').html('<span style="color:#b91c1c">❌ Error de conexión</span>');
         });
     };
 

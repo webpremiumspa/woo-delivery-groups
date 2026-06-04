@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WooCommerce Delivery Groups
  * Description: Agrupa pedidos por cercanía geográfica (K-Means++) y optimiza rutas de reparto (TSP). Considera bodega como punto de inicio y retorno.
- * Version:     2.8.32
+ * Version:     2.9.0
  * Author:      Webpremium Chile
  * Text Domain: woo-delivery-groups
  */
@@ -12,7 +12,7 @@ defined( 'ABSPATH' ) || exit;
 class Woo_Delivery_Groups {
 
     const SLUG        = 'woo-delivery-groups';
-    const VERSION     = '2.8.32';
+    const VERSION     = '2.9.0';
     const OPT_API_KEY = 'wga_google_maps_api_key';
     const OPT_DEPOT       = 'wdg_depot';       // array: address, lat, lng
     const OPT_SEND_EMAIL  = 'wdg_send_photo_email'; // 1 = enviar, 0 = no enviar
@@ -53,6 +53,8 @@ class Woo_Delivery_Groups {
         add_action( 'wp_ajax_wdg_get_plans',    array( $this, 'ajax_get_plans' ) );
         add_action( 'wp_ajax_wdg_load_plan',    array( $this, 'ajax_load_plan' ) );
         add_action( 'wp_ajax_wdg_delete_plan',  array( $this, 'ajax_delete_plan' ) );
+        add_action( 'wp_ajax_wdg_new_orders',   array( $this, 'ajax_new_orders' ) );
+        add_action( 'wp_ajax_wdg_append_orders',array( $this, 'ajax_append_orders' ) );
         add_action( 'wp_ajax_wdg_get_log',          array( $this, 'ajax_get_log' ) );
         add_action( 'wp_ajax_wdg_query_events',     array( $this, 'ajax_query_events' ) );
         add_action( 'wp_ajax_wdg_save_driver',      array( $this, 'ajax_save_driver' ) );
@@ -250,6 +252,20 @@ class Woo_Delivery_Groups {
                             <button id="btnSavePlan" class="button button-primary" onclick="wdgSavePlan()">💾 Guardar</button>
                         </div>
                         <div id="wdgSavePlanStatus" style="font-size:12px;margin-top:6px"></div>
+                    </div>
+
+                    <!-- ── Añadir pedidos nuevos a un plan guardado ── -->
+                    <div class="wdg-card" id="wdgAddOrdersCard" style="display:none">
+                        <h2>➕ Añadir pedidos nuevos</h2>
+                        <p class="wdg-sub" style="margin:0 0 10px">
+                            Detecta pedidos llegados después de guardar y los asigna a la ruta más cercana, reoptimizando el recorrido. El enlace del conductor se mantiene.
+                        </p>
+                        <button id="btnDetectNew" class="button button-primary" onclick="wdgDetectNewOrders()">🔍 Buscar pedidos nuevos</button>
+                        <div id="wdgAddOrdersStatus" style="font-size:12px;margin-top:8px"></div>
+                        <div id="wdgNewOrdersPanel" style="display:none;margin-top:12px">
+                            <div id="wdgNewOrdersList"></div>
+                            <button id="btnConfirmAppend" class="button button-primary button-large" style="width:100%;margin-top:12px" onclick="wdgConfirmAppend()">✅ Confirmar y reoptimizar</button>
+                        </div>
                     </div>
 
                     <!-- ── Progreso en tiempo real ── -->
@@ -554,6 +570,12 @@ class Woo_Delivery_Groups {
 
         $exclude_delivered = sanitize_text_field( $_POST['exclude_delivered'] ?? '0' );
 
+        $data = $this->fetch_orders( $date_from, $date_to, $status, $exclude_delivered );
+        wp_send_json_success( $data );
+    }
+
+    // ── Consulta de pedidos geocodificados (reutilizable) ─────────────────────
+    private function fetch_orders( $date_from, $date_to, $status, $exclude_delivered = '0' ) {
         $args = array(
             'limit'        => 1000,
             'orderby'      => 'date',
@@ -607,7 +629,7 @@ class Woo_Delivery_Groups {
             );
         }
 
-        wp_send_json_success( array('orders' => $result, 'skipped' => $skipped) );
+        return array('orders' => $result, 'skipped' => $skipped);
     }
 
     // ── AJAX: clustering + TSP ────────────────────────────────────────────────
@@ -673,31 +695,11 @@ class Woo_Delivery_Groups {
             $last_to_depot_km  = 0;
 
             if ( count($group_orders) >= 2 ) {
-                $tsp_points = array_values($group_orders);
-
-                if ( $has_depot ) {
-                    // Nearest Neighbor partiendo desde la bodega
-                    $nn_route = $this->tsp_nearest_neighbor_depot( $tsp_points, $depot );
-                } else {
-                    $nn_route = $this->tsp_nearest_neighbor( $tsp_points );
-                }
-
-                $opt_route = $this->tsp_two_opt( $tsp_points, $nn_route );
-                $route_km  = $this->tsp_total_distance( $tsp_points, $opt_route );
-
-                if ( $has_depot ) {
-                    // Sumar distancias bodega→primera parada y última parada→bodega
-                    $first = $tsp_points[ $opt_route[0] ];
-                    $last  = $tsp_points[ $opt_route[ count($opt_route)-1 ] ];
-                    $depot_to_first_km = round( $this->haversine($depot['lat'], $depot['lng'], $first['lat'], $first['lng']), 2 );
-                    $last_to_depot_km  = round( $this->haversine($last['lat'], $last['lng'], $depot['lat'], $depot['lng']), 2 );
-                    $route_km          = round( $depot_to_first_km + $route_km + $last_to_depot_km, 2 );
-                }
-
-                // Reordenar
-                $ordered = array();
-                foreach ( $opt_route as $idx ) $ordered[] = $tsp_points[$idx];
-                $group_orders = $ordered;
+                $group_orders = $this->tsp_optimize( $group_orders, $depot );
+                $metrics      = $this->route_metrics( $group_orders, $depot );
+                $route_km          = $metrics['route_km'];
+                $depot_to_first_km = $metrics['depot_to_first_km'];
+                $last_to_depot_km  = $metrics['last_to_depot_km'];
             }
 
             $result[] = array(
@@ -933,6 +935,53 @@ class Woo_Delivery_Groups {
     }
 
     // ── TSP: Nearest Neighbor desde bodega ────────────────────────────────────
+
+    // ── TSP reutilizable: reordena pedidos (NN + 2-opt) ───────────────────────
+    // $anchor = punto {lat,lng} desde donde arranca la ruta. Si es null, usa la
+    // bodega (si existe); si no hay ni anchor ni bodega, arranca por el punto
+    // más al norte (comportamiento histórico de tsp_nearest_neighbor).
+    private function tsp_optimize( $orders, $depot, $anchor = null ) {
+        $pts = array_values( $orders );
+        $n   = count( $pts );
+        if ( $n < 2 ) return $pts;
+
+        $has_depot = ! empty($depot['lat']) && ! empty($depot['lng']);
+        if ( empty($anchor['lat']) ) {
+            $anchor = $has_depot ? $depot : null;
+        }
+
+        if ( $anchor && ! empty($anchor['lat']) ) {
+            $nn_route = $this->tsp_nearest_neighbor_depot( $pts, $anchor );
+        } else {
+            $nn_route = $this->tsp_nearest_neighbor( $pts );
+        }
+        $opt_route = $this->tsp_two_opt( $pts, $nn_route );
+
+        $ordered = array();
+        foreach ( $opt_route as $idx ) $ordered[] = $pts[$idx];
+        return $ordered;
+    }
+
+    // ── Métricas de una ruta ya ordenada (km total + tramos de bodega) ────────
+    private function route_metrics( $ordered, $depot ) {
+        $pts = array_values( $ordered );
+        $n   = count( $pts );
+        $result = array( 'route_km' => 0, 'depot_to_first_km' => 0, 'last_to_depot_km' => 0 );
+        if ( $n < 2 ) return $result;
+
+        $between = $this->tsp_total_distance( $pts, range(0, $n - 1) );
+
+        if ( ! empty($depot['lat']) && ! empty($depot['lng']) ) {
+            $first = $pts[0];
+            $last  = $pts[ $n - 1 ];
+            $result['depot_to_first_km'] = round( $this->haversine($depot['lat'], $depot['lng'], $first['lat'], $first['lng']), 2 );
+            $result['last_to_depot_km']  = round( $this->haversine($last['lat'], $last['lng'], $depot['lat'], $depot['lng']), 2 );
+            $result['route_km']          = round( $result['depot_to_first_km'] + $between + $result['last_to_depot_km'], 2 );
+        } else {
+            $result['route_km'] = round( $between, 2 );
+        }
+        return $result;
+    }
 
     private function tsp_nearest_neighbor_depot( $points, $depot ) {
         $n       = count($points);
@@ -2289,6 +2338,207 @@ class Woo_Delivery_Groups {
         update_option('wdg_plans_index', $index);
 
         wp_send_json_success( array('deleted' => $plan_id) );
+    }
+
+    // ── Detectar pedidos nuevos no asignados a un plan ────────────────────────
+    // Reutiliza los filtros del plan (fecha de inicio + estado) pero extiende la
+    // fecha final hasta hoy, para captar pedidos llegados después de planificar.
+    public function ajax_new_orders() {
+        check_ajax_referer( 'wdg_nonce', 'nonce' );
+
+        $plan_id = sanitize_text_field( $_POST['plan_id'] ?? '' );
+        if ( empty($plan_id) ) { wp_send_json_error('ID de plan requerido'); }
+
+        $plan = get_option( $this->get_plan_key($plan_id) );
+        if ( empty($plan) ) { wp_send_json_error('Plan no encontrado'); }
+
+        $config    = $plan['config'] ?? array();
+        $date_from = $config['date_from'] ?? '';
+        $status    = $config['status']    ?? 'any';
+        // Extender el rango hasta hoy para captar pedidos posteriores al plan
+        $date_to   = current_time('Y-m-d');
+        if ( ! empty($config['date_to']) && $config['date_to'] > $date_to ) {
+            $date_to = $config['date_to'];
+        }
+
+        $data = $this->fetch_orders( $date_from, $date_to, $status, '0' );
+
+        // IDs ya asignados en cualquier grupo del plan
+        $assigned = array();
+        foreach ( ($plan['groups'] ?? array()) as $g ) {
+            foreach ( ($g['orders'] ?? array()) as $o ) {
+                $assigned[ intval($o['id']) ] = true;
+            }
+        }
+
+        $new_orders = array();
+        foreach ( $data['orders'] as $o ) {
+            if ( ! isset($assigned[ intval($o['id']) ]) ) {
+                $new_orders[] = $o;
+            }
+        }
+
+        wp_send_json_success( array(
+            'orders'    => $new_orders,
+            'count'     => count($new_orders),
+            'date_from' => $date_from,
+            'date_to'   => $date_to,
+            'skipped'   => $data['skipped'],
+        ) );
+    }
+
+    // ── Añadir pedidos nuevos a un plan y reoptimizar las rutas afectadas ──────
+    public function ajax_append_orders() {
+        check_ajax_referer( 'wdg_nonce', 'nonce' );
+
+        $plan_id = sanitize_text_field( $_POST['plan_id'] ?? '' );
+        $incoming = json_decode( stripslashes($_POST['orders'] ?? '[]'), true );
+
+        if ( empty($plan_id) ) { wp_send_json_error('ID de plan requerido'); }
+        if ( empty($incoming) || ! is_array($incoming) ) { wp_send_json_error('Sin pedidos para añadir'); }
+
+        $plan = get_option( $this->get_plan_key($plan_id) );
+        if ( empty($plan) ) { wp_send_json_error('Plan no encontrado'); }
+
+        $depot = $plan['depot'] ?? $this->get_depot();
+
+        // Agrupar pedidos nuevos por ruta destino (group_idx)
+        $by_group = array();
+        foreach ( $incoming as $o ) {
+            $gi = intval( $o['group_idx'] ?? -1 );
+            if ( ! isset($plan['groups'][$gi]) ) continue;
+            unset( $o['group_idx'] );
+            $by_group[$gi][] = $o;
+        }
+        if ( empty($by_group) ) { wp_send_json_error('Ningún pedido se asignó a una ruta válida'); }
+
+        $added_total = 0;
+        $affected    = array();
+
+        foreach ( $by_group as $gi => $adds ) {
+            $group    = &$plan['groups'][$gi];
+            $existing = $group['orders'] ?? array();
+
+            // Evitar duplicados (pedido ya presente en la ruta)
+            $present = array();
+            foreach ( $existing as $o ) $present[ intval($o['id']) ] = true;
+            $to_add = array();
+            foreach ( $adds as $a ) {
+                if ( ! isset($present[ intval($a['id']) ]) ) $to_add[] = $a;
+            }
+            if ( empty($to_add) ) continue;
+
+            // Progreso actual del conductor (indexado por posición del pedido)
+            $token      = $plan['tokens'][$gi] ?? $plan['tokens'][$group['name']] ?? '';
+            $progress   = array();
+            $token_data = null;
+            if ( $token ) {
+                $token_data = get_option( 'wdg_route_' . $token );
+                if ( is_array($token_data) ) $progress = $token_data['progress'] ?? array();
+            }
+
+            // Mapa id → estado de entrega, para conservar el progreso tras reordenar
+            $id_state = array();
+            foreach ( $existing as $i => $ord ) {
+                if ( isset($progress[$i]) ) $id_state[ intval($ord['id']) ] = $progress[$i];
+            }
+
+            // Separar entregados (fijos al frente) de pendientes (reoptimizables)
+            $delivered = array();
+            $pending   = array();
+            foreach ( $existing as $i => $ord ) {
+                if ( isset($progress[$i]) && $progress[$i] === true ) {
+                    $delivered[] = $ord;
+                } else {
+                    $pending[] = $ord;
+                }
+            }
+
+            // Los nuevos entran como pendientes
+            $pending = array_merge( $pending, $to_add );
+
+            // Anclar la reoptimización a la última entrega (o a la bodega)
+            $anchor = null;
+            if ( ! empty($delivered) ) {
+                $last_done = end( $delivered );
+                $anchor = array( 'lat' => $last_done['lat'], 'lng' => $last_done['lng'] );
+            }
+            $pending = $this->tsp_optimize( $pending, $depot, $anchor );
+
+            $new_orders = array_merge( $delivered, $pending );
+
+            // Métricas + centro de la ruta
+            $metrics = $this->route_metrics( $new_orders, $depot );
+            $clat = 0; $clng = 0; $cnt = count($new_orders);
+            foreach ( $new_orders as $o ) { $clat += $o['lat']; $clng += $o['lng']; }
+            if ( $cnt > 0 ) { $clat /= $cnt; $clng /= $cnt; }
+
+            $group['orders']            = $new_orders;
+            $group['count']             = $cnt;
+            $group['route_km']          = $metrics['route_km'];
+            $group['depot_to_first_km'] = $metrics['depot_to_first_km'];
+            $group['last_to_depot_km']  = $metrics['last_to_depot_km'];
+            $group['center']            = array( 'lat' => $clat, 'lng' => $clng );
+
+            // Reconstruir progreso con los nuevos índices y refrescar el token
+            if ( $token && is_array($token_data) ) {
+                $new_progress = array();
+                foreach ( $new_orders as $ni => $ord ) {
+                    $oid = intval( $ord['id'] );
+                    if ( isset($id_state[$oid]) ) $new_progress[$ni] = $id_state[$oid];
+                }
+                $token_data['group']['orders']   = $new_orders;
+                $token_data['group']['count']    = $cnt;
+                $token_data['group']['route_km'] = $metrics['route_km'];
+                $token_data['progress']          = $new_progress;
+                $token_data['expiry']            = time() + ( 72 * 3600 ); // renovar 72h
+                update_option( 'wdg_route_' . $token, $token_data, false );
+            }
+
+            // Registrar eventos 'assigned' para los pedidos nuevos
+            $this->insert_assigned_events( array(
+                'plan_id'   => $plan_id,
+                'plan_name' => $plan['name'],
+                'group'     => array(
+                    'name'        => $group['name'],
+                    'driver_id'   => $group['driver_id']   ?? '',
+                    'driver_name' => $group['driver_name'] ?? '',
+                    'vehicle'     => $group['vehicle']     ?? '',
+                    'orders'      => $to_add,
+                ),
+            ) );
+
+            $added_total      += count($to_add);
+            $affected[ $gi ]   = count($to_add);
+        }
+        unset( $group );
+
+        if ( $added_total === 0 ) { wp_send_json_error('Los pedidos seleccionados ya estaban en sus rutas'); }
+
+        // Persistir el plan
+        update_option( $this->get_plan_key($plan_id), $plan, false );
+
+        // Actualizar el índice (total y porcentaje)
+        $index = get_option('wdg_plans_index', array());
+        if ( isset($index[$plan_id]) ) {
+            $index[$plan_id]['total'] = array_sum( array_column($plan['groups'], 'count') );
+            $done = $index[$plan_id]['done'] ?? 0;
+            $index[$plan_id]['pct'] = $index[$plan_id]['total'] > 0
+                ? round( $done / $index[$plan_id]['total'] * 100 ) : 0;
+            update_option('wdg_plans_index', $index);
+        }
+
+        $this->log('OK', 'append_orders: pedidos añadidos', array(
+            'plan_id'  => $plan_id,
+            'added'    => $added_total,
+            'affected' => $affected,
+        ));
+
+        wp_send_json_success( array(
+            'added'    => $added_total,
+            'affected' => $affected,
+            'groups'   => $plan['groups'],
+        ) );
     }
 
     // ── TOKEN: generar y guardar ruta para conductor ──────────────────────────

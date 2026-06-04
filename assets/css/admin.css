@@ -658,6 +658,14 @@
 .wdg-quota-total.ok  { background: #dcfce7; color: #15803d; }
 .wdg-quota-total.err { background: #fee2e2; color: #b91c1c; }
 
+/* ── Tabla de pedidos nuevos (añadir a plan) ──────── */
+.wdg-new-orders-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.wdg-new-orders-table th,
+.wdg-new-orders-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #e5e7eb; vertical-align: middle; }
+.wdg-new-orders-table th { color: #64748b; font-weight: 600; font-size: 11px; }
+.wdg-new-orders-table select { max-width: 180px; }
+.wdg-new-orders-table .wdg-move-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+
 /* ── Modal mover pedido ────────────────────────── */
 #wdg-move-overlay {
     display: none;
