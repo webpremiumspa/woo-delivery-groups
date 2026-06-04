@@ -17,6 +17,7 @@ var currentGroups  = [];     // grupos actuales en memoria
 var currentPlanId  = null;   // ID del plan cargado (null = sin guardar)
 var currentConfig  = {};     // config actual
 var planIsSaved    = false;  // true después de guardar → bloquea mover
+var wdgReassignMode = false; // modo reasignación masiva de pedidos
 
 // Stub global functions before jQuery ready (PHP onclicks need them immediately)
 window.wdgNewPlan    = function() { jQuery(function(){ wdgNewPlan(); }); };
@@ -164,6 +165,8 @@ jQuery(document).ready(function ($) {
         currentPlanId     = null;
         planIsSaved       = false;
         activeTokens      = {};
+        wdgReassignMode   = false;
+        $('#wdg-reassign-bar').hide();
 
         $.post(wdgData.ajaxUrl, {
             action:            'wdg_get_orders',
@@ -424,6 +427,18 @@ var groups   = res.data.groups;
     // ── Lista de grupos ───────────────────────────────────────────────────────
     function renderGroups(groups, hasDepot) {
         var html = '';
+
+        // Barra de reasignación masiva (solo en planes guardados)
+        if (planIsSaved && currentPlanId) {
+            html += '<div class="wdg-reassign-toolbar">';
+            if (!wdgReassignMode) {
+                html += '<button class="button button-small" onclick="wdgToggleReassign(true)">↔️ Reasignar pedidos</button>';
+            } else {
+                html += '<span class="wdg-reassign-active">✓ Modo reasignación: marca pedidos y elige destino en la barra inferior.</span>';
+            }
+            html += '</div>';
+        }
+
         groups.forEach(function(g, i) {
             var color    = GROUP_COLORS[i % GROUP_COLORS.length];
             var kmTxt    = g.route_km > 0 ? ' &nbsp;·&nbsp; ~' + g.route_km + ' km' : '';
@@ -506,7 +521,14 @@ var groups   = res.data.groups;
             }
 
             g.orders.forEach(function(o, idx) {
-                html += '<div class="wdg-order-row">';
+                html += '<div class="wdg-order-row'+(wdgReassignMode ? ' wdg-reassign-row' : '')+'">';
+                if (wdgReassignMode) {
+                    if (o.delivered) {
+                        html += '<div class="wdg-reassign-cb-cell" title="Entregado: no se puede mover">🔒</div>';
+                    } else {
+                        html += '<div class="wdg-reassign-cb-cell"><input type="checkbox" class="wdg-reassign-cb" data-id="'+o.id+'" data-gi="'+i+'"></div>';
+                    }
+                }
                 html += '<div class="wdg-order-stop" style="background:'+color+'">'+(idx+1)+'</div>';
                 html += '<div class="wdg-order-id">'+
                     '<a href="'+wdgData.adminUrl+'post.php?post='+o.id+'&action=edit" target="_blank">#'+o.id+'</a>'+
@@ -1118,6 +1140,8 @@ var ok = confirm('⚠️ Importante: Al guardar la planificación, los pedidos q
         currentPlanId     = null;
         planIsSaved       = false;
         activeTokens      = {};
+        wdgReassignMode   = false;
+        $('#wdg-reassign-bar').hide();
         switchTab('new');
         $('#wdgGroupsCard, #wdgStatsCard, #wdgSavePlanCard, #wdgProgressCard, #wdgRepartidoresCard, #wdgAddOrdersCard').hide();
         $('#wdgNewOrdersPanel').hide();
@@ -1166,6 +1190,8 @@ var plan = res.data;
             currentPlanId = plan.id;
             currentGroups = plan.groups;
             planIsSaved   = true;  // plan ya guardado → permitir generar links
+            wdgReassignMode = false;
+            $('#wdg-reassign-bar').hide();
             currentConfig = plan.config || {};
 
             // Restaurar tokens
@@ -1342,6 +1368,86 @@ if (g.token) activeTokens[i] = g.token;
         });
     };
 
+    // ══ REASIGNACIÓN MASIVA DE PEDIDOS ENTRE RUTAS ════════════════════════════
+    window.wdgToggleReassign = function(on) {
+        wdgReassignMode = !!on;
+        var hasDepot = !!(wdgData.depot && wdgData.depot.lat);
+        renderGroups(currentGroups, hasDepot);
+
+        if (wdgReassignMode) {
+            // Expandir todos los grupos para facilitar la selección
+            $('.wdg-group-body').addClass('open');
+            $('.wdg-group-toggle').text('▲');
+            // Poblar el selector de ruta destino
+            var opts = '';
+            currentGroups.forEach(function(g, gi) {
+                opts += '<option value="' + gi + '">' + escHtml(g.name) + '</option>';
+            });
+            $('#wdg-reassign-target').html(opts);
+            wdgUpdateReassignCount();
+            $('#wdg-reassign-bar').css('display', 'flex');
+        } else {
+            $('#wdg-reassign-bar').hide();
+        }
+    };
+
+    function wdgUpdateReassignCount() {
+        var n = $('.wdg-reassign-cb:checked').length;
+        $('#wdg-reassign-count').text(n + ' seleccionado' + (n === 1 ? '' : 's'));
+    }
+
+    $(document).on('change', '.wdg-reassign-cb', function() {
+        wdgUpdateReassignCount();
+    });
+
+    window.wdgDoReassign = function(mode) {
+        var $checked = $('.wdg-reassign-cb:checked');
+        if (!$checked.length) { alert('Marca al menos un pedido.'); return; }
+
+        // Lookup id → pedido (para lat/lng en modo automático)
+        var lookup = {};
+        currentGroups.forEach(function(g) {
+            (g.orders || []).forEach(function(o) { lookup[o.id] = o; });
+        });
+
+        var assignments = [];
+        if (mode === 'auto') {
+            $checked.each(function() {
+                var id = parseInt($(this).data('id'));
+                var o  = lookup[id];
+                if (o) assignments.push({ id: id, group_idx: wdgNearestGroup(o) });
+            });
+        } else {
+            var target = parseInt($('#wdg-reassign-target').val());
+            if (isNaN(target)) { alert('Elige una ruta destino.'); return; }
+            $checked.each(function() {
+                assignments.push({ id: parseInt($(this).data('id')), group_idx: target });
+            });
+        }
+
+        $('#wdg-reassign-bar button').prop('disabled', true);
+        $.post(wdgData.ajaxUrl, {
+            action:      'wdg_reassign_orders',
+            nonce:       wdgData.nonce,
+            plan_id:     currentPlanId,
+            assignments: JSON.stringify(assignments),
+        }, function(res) {
+            $('#wdg-reassign-bar button').prop('disabled', false);
+            if (!res.success) { alert('Error: ' + res.data); return; }
+            wdgReassignMode = false;
+            $('#wdg-reassign-bar').hide();
+            var msg = res.data.moved + ' pedido(s) reasignado(s) y rutas reoptimizadas.';
+            if (res.data.blocked) msg += ' ' + res.data.blocked + ' omitido(s) por estar entregados.';
+            window.wdgLoadPlan(currentPlanId);
+            setTimeout(function() {
+                $('#wdgSavePlanStatus').html('<span style="color:#15803d">✅ ' + msg + '</span>');
+            }, 700);
+        }).fail(function() {
+            $('#wdg-reassign-bar button').prop('disabled', false);
+            alert('Error de conexión');
+        });
+    };
+
     // ── Eliminar planificación ────────────────────────────────────────────────
     window.wdgDeletePlan = function(planId, planName) {
         if (!confirm('¿Eliminar la planificación "' + planName + '"? Esta acción no se puede deshacer.')) return;
@@ -1362,6 +1468,7 @@ if (res.success) {
 
     // ── Switch de pestañas ────────────────────────────────────────────────────
     function switchTab(tab) {
+        if (tab !== 'new') { wdgReassignMode = false; $('#wdg-reassign-bar').hide(); }
         $('.wdg-tab').removeClass('wdg-tab--active');
         $('.wdg-tab-content').hide();
         $('.wdg-tab[data-tab="'+tab+'"]').addClass('wdg-tab--active');

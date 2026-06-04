@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WooCommerce Delivery Groups
  * Description: Agrupa pedidos por cercanía geográfica (K-Means++) y optimiza rutas de reparto (TSP). Considera bodega como punto de inicio y retorno.
- * Version:     2.9.0
+ * Version:     2.10.0
  * Author:      Webpremium Chile
  * Text Domain: woo-delivery-groups
  */
@@ -12,7 +12,7 @@ defined( 'ABSPATH' ) || exit;
 class Woo_Delivery_Groups {
 
     const SLUG        = 'woo-delivery-groups';
-    const VERSION     = '2.9.0';
+    const VERSION     = '2.10.0';
     const OPT_API_KEY = 'wga_google_maps_api_key';
     const OPT_DEPOT       = 'wdg_depot';       // array: address, lat, lng
     const OPT_SEND_EMAIL  = 'wdg_send_photo_email'; // 1 = enviar, 0 = no enviar
@@ -55,6 +55,7 @@ class Woo_Delivery_Groups {
         add_action( 'wp_ajax_wdg_delete_plan',  array( $this, 'ajax_delete_plan' ) );
         add_action( 'wp_ajax_wdg_new_orders',   array( $this, 'ajax_new_orders' ) );
         add_action( 'wp_ajax_wdg_append_orders',array( $this, 'ajax_append_orders' ) );
+        add_action( 'wp_ajax_wdg_reassign_orders', array( $this, 'ajax_reassign_orders' ) );
         add_action( 'wp_ajax_wdg_get_log',          array( $this, 'ajax_get_log' ) );
         add_action( 'wp_ajax_wdg_query_events',     array( $this, 'ajax_query_events' ) );
         add_action( 'wp_ajax_wdg_save_driver',      array( $this, 'ajax_save_driver' ) );
@@ -515,6 +516,16 @@ class Woo_Delivery_Groups {
                         <button class="button button-primary" id="wdg-move-confirm" onclick="wdgConfirmMove()" disabled>Mover →</button>
                     </div>
                 </div>
+            </div>
+
+            <!-- ── Barra de reasignación masiva (fija, abajo) ── -->
+            <div id="wdg-reassign-bar" style="display:none">
+                <span id="wdg-reassign-count">0 seleccionados</span>
+                <label style="margin:0 6px 0 14px">Mover a:</label>
+                <select id="wdg-reassign-target"></select>
+                <button class="button button-primary" onclick="wdgDoReassign('single')">Mover a esta ruta</button>
+                <button class="button" onclick="wdgDoReassign('auto')" title="Asignar cada uno a la ruta más cercana">📍 Auto: más cercana</button>
+                <button class="button" onclick="wdgToggleReassign(false)">Salir</button>
             </div>
 
         </div><!-- /.wrap -->
@@ -2428,72 +2439,15 @@ class Woo_Delivery_Groups {
             }
             if ( empty($to_add) ) continue;
 
-            // Progreso actual del conductor (indexado por posición del pedido)
-            $token      = $plan['tokens'][$gi] ?? $plan['tokens'][$group['name']] ?? '';
-            $progress   = array();
-            $token_data = null;
-            if ( $token ) {
-                $token_data = get_option( 'wdg_route_' . $token );
-                if ( is_array($token_data) ) $progress = $token_data['progress'] ?? array();
-            }
+            // Estado de entrega actual (id → progreso) para conservarlo tras reordenar
+            $token    = $plan['tokens'][$gi] ?? $plan['tokens'][$group['name']] ?? '';
+            $id_state = $this->group_delivery_state( $existing, $token );
 
-            // Mapa id → estado de entrega, para conservar el progreso tras reordenar
-            $id_state = array();
-            foreach ( $existing as $i => $ord ) {
-                if ( isset($progress[$i]) ) $id_state[ intval($ord['id']) ] = $progress[$i];
-            }
+            // Lista completa deseada: existentes + nuevos (los nuevos van como pendientes)
+            $full_orders = array_merge( $existing, $to_add );
 
-            // Separar entregados (fijos al frente) de pendientes (reoptimizables)
-            $delivered = array();
-            $pending   = array();
-            foreach ( $existing as $i => $ord ) {
-                if ( isset($progress[$i]) && $progress[$i] === true ) {
-                    $delivered[] = $ord;
-                } else {
-                    $pending[] = $ord;
-                }
-            }
-
-            // Los nuevos entran como pendientes
-            $pending = array_merge( $pending, $to_add );
-
-            // Anclar la reoptimización a la última entrega (o a la bodega)
-            $anchor = null;
-            if ( ! empty($delivered) ) {
-                $last_done = end( $delivered );
-                $anchor = array( 'lat' => $last_done['lat'], 'lng' => $last_done['lng'] );
-            }
-            $pending = $this->tsp_optimize( $pending, $depot, $anchor );
-
-            $new_orders = array_merge( $delivered, $pending );
-
-            // Métricas + centro de la ruta
-            $metrics = $this->route_metrics( $new_orders, $depot );
-            $clat = 0; $clng = 0; $cnt = count($new_orders);
-            foreach ( $new_orders as $o ) { $clat += $o['lat']; $clng += $o['lng']; }
-            if ( $cnt > 0 ) { $clat /= $cnt; $clng /= $cnt; }
-
-            $group['orders']            = $new_orders;
-            $group['count']             = $cnt;
-            $group['route_km']          = $metrics['route_km'];
-            $group['depot_to_first_km'] = $metrics['depot_to_first_km'];
-            $group['last_to_depot_km']  = $metrics['last_to_depot_km'];
-            $group['center']            = array( 'lat' => $clat, 'lng' => $clng );
-
-            // Reconstruir progreso con los nuevos índices y refrescar el token
-            if ( $token && is_array($token_data) ) {
-                $new_progress = array();
-                foreach ( $new_orders as $ni => $ord ) {
-                    $oid = intval( $ord['id'] );
-                    if ( isset($id_state[$oid]) ) $new_progress[$ni] = $id_state[$oid];
-                }
-                $token_data['group']['orders']   = $new_orders;
-                $token_data['group']['count']    = $cnt;
-                $token_data['group']['route_km'] = $metrics['route_km'];
-                $token_data['progress']          = $new_progress;
-                $token_data['expiry']            = time() + ( 72 * 3600 ); // renovar 72h
-                update_option( 'wdg_route_' . $token, $token_data, false );
-            }
+            // Reordenar (entregados fijos al frente), recalcular métricas y refrescar el token
+            $this->rebuild_group( $group, $token, $full_orders, $id_state, $depot );
 
             // Registrar eventos 'assigned' para los pedidos nuevos
             $this->insert_assigned_events( array(
@@ -2538,6 +2492,181 @@ class Woo_Delivery_Groups {
             'added'    => $added_total,
             'affected' => $affected,
             'groups'   => $plan['groups'],
+        ) );
+    }
+
+    // ── Estado de entrega de una ruta: id de pedido → progreso ────────────────
+    // El progreso del token está indexado por posición; lo mapeamos por id para
+    // que sobreviva a los reordenamientos.
+    private function group_delivery_state( $orders, $token ) {
+        $progress = array();
+        if ( $token ) {
+            $token_data = get_option( 'wdg_route_' . $token );
+            if ( is_array($token_data) ) $progress = $token_data['progress'] ?? array();
+        }
+        $state = array();
+        foreach ( $orders as $i => $ord ) {
+            if ( isset($progress[$i]) ) $state[ intval($ord['id']) ] = $progress[$i];
+        }
+        return $state;
+    }
+
+    // ── Reconstruir una ruta: reordena pendientes, fija entregados al frente,
+    //    recalcula métricas y refresca el token in-place (mismo enlace) ─────────
+    private function rebuild_group( &$group, $token, $full_orders, $id_state, $depot ) {
+        // Separar entregados (fijos, en su orden actual) de pendientes (reoptimizables)
+        $delivered = array();
+        $pending   = array();
+        foreach ( $full_orders as $ord ) {
+            $oid = intval( $ord['id'] );
+            if ( isset($id_state[$oid]) && $id_state[$oid] === true ) {
+                $delivered[] = $ord;
+            } else {
+                $pending[] = $ord;
+            }
+        }
+
+        // Reoptimizar pendientes anclando a la última entrega (o a la bodega)
+        $anchor = null;
+        if ( ! empty($delivered) ) {
+            $last_done = end( $delivered );
+            $anchor = array( 'lat' => $last_done['lat'], 'lng' => $last_done['lng'] );
+        }
+        $pending = $this->tsp_optimize( $pending, $depot, $anchor );
+
+        $ordered = array_merge( $delivered, $pending );
+
+        // Métricas + centro
+        $metrics = $this->route_metrics( $ordered, $depot );
+        $clat = 0; $clng = 0; $cnt = count($ordered);
+        foreach ( $ordered as $o ) { $clat += $o['lat']; $clng += $o['lng']; }
+        if ( $cnt > 0 ) { $clat /= $cnt; $clng /= $cnt; }
+
+        $group['orders']            = $ordered;
+        $group['count']             = $cnt;
+        $group['route_km']          = $metrics['route_km'];
+        $group['depot_to_first_km'] = $metrics['depot_to_first_km'];
+        $group['last_to_depot_km']  = $metrics['last_to_depot_km'];
+        $group['center']            = array( 'lat' => $clat, 'lng' => $clng );
+
+        // Refrescar el token del conductor (mismo enlace), reindexando el progreso
+        if ( $token ) {
+            $token_data = get_option( 'wdg_route_' . $token );
+            if ( is_array($token_data) ) {
+                $new_progress = array();
+                foreach ( $ordered as $ni => $ord ) {
+                    $oid = intval( $ord['id'] );
+                    if ( isset($id_state[$oid]) ) $new_progress[$ni] = $id_state[$oid];
+                }
+                $token_data['group']['orders']   = $ordered;
+                $token_data['group']['count']    = $cnt;
+                $token_data['group']['route_km'] = $metrics['route_km'];
+                $token_data['progress']          = $new_progress;
+                $token_data['expiry']            = time() + ( 72 * 3600 ); // renovar 72h
+                update_option( 'wdg_route_' . $token, $token_data, false );
+            }
+        }
+    }
+
+    // ── Reasignar pedidos existentes entre rutas (masivo) ─────────────────────
+    public function ajax_reassign_orders() {
+        check_ajax_referer( 'wdg_nonce', 'nonce' );
+
+        $plan_id     = sanitize_text_field( $_POST['plan_id'] ?? '' );
+        $assignments = json_decode( stripslashes($_POST['assignments'] ?? '[]'), true ); // [{id, group_idx}]
+
+        if ( empty($plan_id) ) { wp_send_json_error('ID de plan requerido'); }
+        if ( empty($assignments) || ! is_array($assignments) ) { wp_send_json_error('Sin pedidos para reasignar'); }
+
+        $plan = get_option( $this->get_plan_key($plan_id) );
+        if ( empty($plan) ) { wp_send_json_error('Plan no encontrado'); }
+
+        $depot = $plan['depot'] ?? $this->get_depot();
+
+        // Destino solicitado: id de pedido → índice de ruta destino
+        $target = array();
+        foreach ( $assignments as $a ) {
+            $oid = intval( $a['id'] ?? 0 );
+            $gi  = intval( $a['group_idx'] ?? -1 );
+            if ( $oid && isset($plan['groups'][$gi]) ) $target[$oid] = $gi;
+        }
+        if ( empty($target) ) { wp_send_json_error('Asignaciones inválidas'); }
+
+        // Inventario actual: objeto, ruta de origen, token y estado de entrega por id
+        $order_obj    = array();  // id → array del pedido
+        $order_home   = array();  // id → índice de ruta actual
+        $group_tokens = array();  // gi → token
+        $id_state     = array();  // id → progreso (true / 'visited')
+        foreach ( $plan['groups'] as $gi => $g ) {
+            $token = $plan['tokens'][$gi] ?? $plan['tokens'][$g['name']] ?? '';
+            $group_tokens[$gi] = $token;
+            $state = $this->group_delivery_state( $g['orders'] ?? array(), $token );
+            foreach ( ($g['orders'] ?? array()) as $o ) {
+                $oid = intval( $o['id'] );
+                $order_obj[$oid]  = $o;
+                $order_home[$oid] = $gi;
+                if ( isset($state[$oid]) ) $id_state[$oid] = $state[$oid];
+            }
+        }
+
+        // Validar movimientos: existe, cambia de ruta y no está entregado
+        $moves   = array();   // id → ruta destino
+        $blocked = 0;
+        foreach ( $target as $oid => $to_gi ) {
+            if ( ! isset($order_home[$oid]) ) continue;          // no está en el plan
+            if ( $order_home[$oid] === $to_gi ) continue;        // ya está en esa ruta
+            if ( isset($id_state[$oid]) && $id_state[$oid] === true ) { $blocked++; continue; } // entregado
+            $moves[$oid] = $to_gi;
+        }
+        if ( empty($moves) ) {
+            wp_send_json_error( $blocked > 0
+                ? 'Los pedidos seleccionados ya están entregados y no se pueden mover'
+                : 'Nada que mover (ya estaban en su ruta destino)' );
+        }
+
+        // Los pedidos movidos arrancan sin estado en su nueva ruta
+        foreach ( $moves as $oid => $to_gi ) { unset( $id_state[$oid] ); }
+
+        // Rutas afectadas (origen y destino)
+        $affected_idx = array();
+        foreach ( $moves as $oid => $to_gi ) {
+            $affected_idx[ $order_home[$oid] ] = true;
+            $affected_idx[ $to_gi ]            = true;
+        }
+
+        // Construir el nuevo conjunto de pedidos por ruta afectada
+        $new_sets = array();
+        foreach ( array_keys($affected_idx) as $gi ) {
+            $kept = array();
+            foreach ( $plan['groups'][$gi]['orders'] as $o ) {
+                if ( isset($moves[ intval($o['id']) ]) ) continue; // sale de esta ruta
+                $kept[] = $o;
+            }
+            $new_sets[$gi] = $kept;
+        }
+        foreach ( $moves as $oid => $to_gi ) {
+            $new_sets[$to_gi][] = $order_obj[$oid];
+        }
+
+        // Reconstruir cada ruta afectada (reoptimiza + refresca token)
+        foreach ( $new_sets as $gi => $set ) {
+            $group = &$plan['groups'][$gi];
+            $this->rebuild_group( $group, $group_tokens[$gi], $set, $id_state, $depot );
+            unset( $group );
+        }
+
+        update_option( $this->get_plan_key($plan_id), $plan, false );
+
+        $this->log('OK', 'reassign_orders: pedidos reasignados', array(
+            'plan_id' => $plan_id,
+            'moved'   => count($moves),
+            'blocked' => $blocked,
+        ));
+
+        wp_send_json_success( array(
+            'moved'   => count($moves),
+            'blocked' => $blocked,
+            'groups'  => $plan['groups'],
         ) );
     }
 

@@ -658,6 +658,30 @@
 .wdg-quota-total.ok  { background: #dcfce7; color: #15803d; }
 .wdg-quota-total.err { background: #fee2e2; color: #b91c1c; }
 
+/* ── Reasignación masiva de pedidos ───────────────── */
+.wdg-reassign-toolbar { margin-bottom: 10px; }
+.wdg-reassign-active { font-size: 12px; color: #15803d; font-weight: 600; }
+.wdg-reassign-row { background: #f8fafc; grid-template-columns: 26px 28px 55px 1fr auto; }
+.wdg-reassign-cb-cell { display: flex; align-items: center; justify-content: center; }
+.wdg-reassign-cb-cell input { margin: 0; transform: scale(1.2); cursor: pointer; }
+#wdg-reassign-bar {
+    position: fixed;
+    bottom: 0;
+    left: 160px; /* ancho del menú admin de WP */
+    right: 0;
+    z-index: 99998;
+    align-items: center;
+    gap: 8px;
+    background: #1e293b;
+    color: #fff;
+    padding: 12px 20px;
+    box-shadow: 0 -4px 16px rgba(0,0,0,.18);
+}
+#wdg-reassign-bar #wdg-reassign-count { font-weight: 700; font-size: 13px; }
+#wdg-reassign-bar select { min-width: 160px; padding: 3px 6px; }
+.folded #wdg-reassign-bar { left: 36px; } /* menú colapsado de WP */
+@media (max-width: 782px) { #wdg-reassign-bar { left: 0; } }
+
 /* ── Tabla de pedidos nuevos (añadir a plan) ──────── */
 .wdg-new-orders-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .wdg-new-orders-table th,
