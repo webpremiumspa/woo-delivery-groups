@@ -1,0 +1,7 @@
+---
+deployment:
+  tasks:
+    - export DEPLOYPATH=/home/chimuelo/dev.chimuelo.cl/wp-content/plugins/woo-delivery-groups
+    - /bin/mkdir -p $DEPLOYPATH
+    - /bin/cp -f woo-delivery-groups.php $DEPLOYPATH
+    - /bin/cp -Rf assets $DEPLOYPATH
