@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WooCommerce Delivery Groups
  * Description: Agrupa pedidos por cercanía geográfica (K-Means++) y optimiza rutas de reparto (TSP). Considera bodega como punto de inicio y retorno.
- * Version:     2.10.0
+ * Version:     2.10.1
  * Author:      Webpremium Chile
  * Text Domain: woo-delivery-groups
  */
@@ -12,7 +12,7 @@ defined( 'ABSPATH' ) || exit;
 class Woo_Delivery_Groups {
 
     const SLUG        = 'woo-delivery-groups';
-    const VERSION     = '2.10.0';
+    const VERSION     = '2.10.1';
     const OPT_API_KEY = 'wga_google_maps_api_key';
     const OPT_DEPOT       = 'wdg_depot';       // array: address, lat, lng
     const OPT_SEND_EMAIL  = 'wdg_send_photo_email'; // 1 = enviar, 0 = no enviar
@@ -1424,11 +1424,17 @@ class Woo_Delivery_Groups {
             ));
 
             if ( $existing ) {
-                // Actualizar driver si cambió
+                // Actualizar driver / vehículo / grupo si cambiaron
                 $wpdb->update( $table,
-                    array( 'driver_id' => $driver_id, 'driver_name' => $driver_name, 'updated_at' => $now ),
+                    array(
+                        'driver_id'   => $driver_id,
+                        'driver_name' => $driver_name,
+                        'group_name'  => $group['name'] ?? '',
+                        'vehicle'     => $vehicle,
+                        'updated_at'  => $now,
+                    ),
                     array( 'id' => $existing ),
-                    array('%s','%s','%s'), array('%d')
+                    array('%s','%s','%s','%s','%s'), array('%d')
                 );
             } else {
                 $wpdb->insert( $table, array(
@@ -2443,6 +2449,13 @@ class Woo_Delivery_Groups {
             $token    = $plan['tokens'][$gi] ?? $plan['tokens'][$group['name']] ?? '';
             $id_state = $this->group_delivery_state( $existing, $token );
 
+            // Repartidor / vehículo de la ruta: el token es la fuente fiable
+            $tok_data    = $token ? get_option( 'wdg_route_' . $token ) : null;
+            $tok_group   = is_array($tok_data) ? ($tok_data['group'] ?? array()) : array();
+            $driver_id   = $group['driver_id']   ?? $tok_group['driver_id']   ?? '';
+            $driver_name = $group['driver_name'] ?? $tok_group['driver_name'] ?? '';
+            $vehicle     = $tok_group['vehicle'] ?? $group['vehicle'] ?? '';
+
             // Lista completa deseada: existentes + nuevos (los nuevos van como pendientes)
             $full_orders = array_merge( $existing, $to_add );
 
@@ -2455,9 +2468,9 @@ class Woo_Delivery_Groups {
                 'plan_name' => $plan['name'],
                 'group'     => array(
                     'name'        => $group['name'],
-                    'driver_id'   => $group['driver_id']   ?? '',
-                    'driver_name' => $group['driver_name'] ?? '',
-                    'vehicle'     => $group['vehicle']     ?? '',
+                    'driver_id'   => $driver_id,
+                    'driver_name' => $driver_name,
+                    'vehicle'     => $vehicle,
                     'orders'      => $to_add,
                 ),
             ) );
@@ -2688,9 +2701,11 @@ class Woo_Delivery_Groups {
         $plan_name = sanitize_text_field( $_POST['plan_name'] ?? '' );
 
         // Inyectar plan_id en el grupo para trazabilidad
-        $group_data['plan_id']   = $plan_id;
-        $group_data['plan_name'] = $plan_name;
-        $group_data['driver_id'] = sanitize_text_field( $_POST['driver_id'] ?? '' );
+        $group_data['plan_id']     = $plan_id;
+        $group_data['plan_name']   = $plan_name;
+        $group_data['driver_id']   = sanitize_text_field( $_POST['driver_id']   ?? '' );
+        $group_data['driver_name'] = sanitize_text_field( $_POST['driver_name'] ?? ($group_data['driver_name'] ?? '') );
+        $group_data['vehicle']     = sanitize_text_field( $_POST['vehicle']     ?? '' );
 
         $payload = array(
             'token'      => $token,
