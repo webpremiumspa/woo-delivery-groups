@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WooCommerce Delivery Groups
  * Description: Agrupa pedidos por cercanía geográfica (K-Means++) y optimiza rutas de reparto (TSP). Considera bodega como punto de inicio y retorno.
- * Version:     2.10.1
+ * Version:     2.11.0
  * Author:      Webpremium Chile
  * Text Domain: woo-delivery-groups
  */
@@ -12,7 +12,7 @@ defined( 'ABSPATH' ) || exit;
 class Woo_Delivery_Groups {
 
     const SLUG        = 'woo-delivery-groups';
-    const VERSION     = '2.10.1';
+    const VERSION     = '2.11.0';
     const OPT_API_KEY = 'wga_google_maps_api_key';
     const OPT_DEPOT       = 'wdg_depot';       // array: address, lat, lng
     const OPT_SEND_EMAIL  = 'wdg_send_photo_email'; // 1 = enviar, 0 = no enviar

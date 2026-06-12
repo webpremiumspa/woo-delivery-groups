@@ -682,6 +682,18 @@
 .folded #wdg-reassign-bar { left: 36px; } /* menú colapsado de WP */
 @media (max-width: 782px) { #wdg-reassign-bar { left: 0; } }
 
+/* ── Herramientas de selección sobre el mapa ──────── */
+.wdg-map-tools { display: flex; gap: 6px; margin: 10px 0 0 10px; }
+.wdg-map-tools button {
+    background: #fff; border: 1px solid #c3c4c7; border-radius: 4px;
+    padding: 6px 10px; font-size: 12px; font-weight: 600; color: #1e293b;
+    cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.18);
+}
+.wdg-map-tools button:hover { border-color: #2271b1; color: #2271b1; }
+.wdg-map-tools button.active { background: #2271b1; border-color: #2271b1; color: #fff; }
+#wdgMap.wdg-area-on, #wdgMap.wdg-area-on * { cursor: crosshair !important; }
+#wdgMap.wdg-area-on .wdg-map-tools, #wdgMap.wdg-area-on .wdg-map-tools * { cursor: pointer !important; }
+
 /* ── Tabla de pedidos nuevos (añadir a plan) ──────── */
 .wdg-new-orders-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .wdg-new-orders-table th,

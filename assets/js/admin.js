@@ -19,6 +19,15 @@ var currentConfig  = {};     // config actual
 var planIsSaved    = false;  // true después de guardar → bloquea mover
 var wdgReassignMode = false; // modo reasignación masiva de pedidos
 
+// ── Selección de pedidos en el mapa (área + ctrl/shift-click) ───────────────
+var wdgSel          = {};    // { orderId: true } pedidos seleccionados
+var wdgMarkerById   = {};    // { orderId: marker }
+var wdgAreaMode     = false; // dibujar rectángulo de selección al arrastrar
+var wdgDragging     = false; // arrastre de rectángulo en curso
+var wdgSelStart     = null;  // LatLng inicial del rectángulo
+var wdgSelRect      = null;  // google.maps.Rectangle activo
+var wdgProjOverlay  = null;  // OverlayView para proyección píxel↔LatLng
+
 // Stub global functions before jQuery ready (PHP onclicks need them immediately)
 window.wdgNewPlan    = function() { jQuery(function(){ wdgNewPlan(); }); };
 window.wdgLoadPlan   = function(id) { jQuery(function(){ wdgLoadPlan(id); }); };
@@ -69,6 +78,71 @@ jQuery(document).ready(function ($) {
         if ( wdgData.depot && wdgData.depot.lat ) {
             placeDepotMarker(wdgData.depot.lat, wdgData.depot.lng, wdgData.depot.address);
         }
+
+        wdgInitMapSelection();
+    }
+
+    // ── Selección por área / multi-selección en el mapa ─────────────────────────
+    function wdgInitMapSelection() {
+        // Overlay sólo para obtener la proyección píxel↔LatLng
+        wdgProjOverlay = new google.maps.OverlayView();
+        wdgProjOverlay.onAdd = function(){}; wdgProjOverlay.draw = function(){}; wdgProjOverlay.onRemove = function(){};
+        wdgProjOverlay.setMap(map);
+
+        // Botones flotantes sobre el mapa
+        var tools = document.createElement('div');
+        tools.className = 'wdg-map-tools';
+        tools.innerHTML =
+            '<button id="wdgAreaBtn" type="button" title="Arrastra para seleccionar pedidos dentro de un rectángulo">▭ Seleccionar área</button>' +
+            '<button id="wdgSelClearBtn" type="button" style="display:none">✕ Limpiar (0)</button>';
+        map.controls[google.maps.ControlPosition.TOP_LEFT].push(tools);
+
+        var mapEl = document.getElementById('wdgMap');
+
+        mapEl.addEventListener('mousedown', function(ev){
+            if (!wdgAreaMode || ev.button !== 0) return;
+            if (ev.target && ev.target.closest && ev.target.closest('.wdg-map-tools')) return; // no arrastrar desde los botones
+            ev.preventDefault();
+            var proj = wdgProjOverlay.getProjection();
+            if (!proj) return;
+            var r = mapEl.getBoundingClientRect();
+            wdgSelStart = proj.fromContainerPixelToLatLng(new google.maps.Point(ev.clientX - r.left, ev.clientY - r.top));
+            wdgDragging = true;
+            if (wdgSelRect) wdgSelRect.setMap(null);
+            wdgSelRect = new google.maps.Rectangle({
+                map: map, bounds: new google.maps.LatLngBounds(wdgSelStart, wdgSelStart),
+                fillColor: '#2271b1', fillOpacity: 0.12, strokeColor: '#2271b1', strokeWeight: 1.5,
+                clickable: false, zIndex: 1,
+            });
+        });
+
+        mapEl.addEventListener('mousemove', function(ev){
+            if (!wdgAreaMode || !wdgDragging || !wdgSelStart) return;
+            var proj = wdgProjOverlay.getProjection();
+            if (!proj) return;
+            var r = mapEl.getBoundingClientRect();
+            var cur = proj.fromContainerPixelToLatLng(new google.maps.Point(ev.clientX - r.left, ev.clientY - r.top));
+            var b = new google.maps.LatLngBounds();
+            b.extend(wdgSelStart); b.extend(cur);
+            if (wdgSelRect) wdgSelRect.setBounds(b);
+        });
+
+        // mouseup en window para no perder el final si el cursor sale del mapa
+        window.addEventListener('mouseup', function(){
+            if (!wdgAreaMode || !wdgDragging) return;
+            wdgDragging = false;
+            var b = wdgSelRect ? wdgSelRect.getBounds() : null;
+            if (b) {
+                markers.forEach(function(m){
+                    if (!m.orderId) return;
+                    if (!b.contains(m.getPosition())) return;
+                    var o = wdgOrderById(m.orderId);
+                    if (o && !o.delivered) wdgToggleSel(m.orderId, true);
+                });
+            }
+            if (wdgSelRect) { wdgSelRect.setMap(null); wdgSelRect = null; }
+            wdgSelStart = null;
+        });
     }
 
     if ( wdgData.apiKey ) {
@@ -166,6 +240,8 @@ jQuery(document).ready(function ($) {
         planIsSaved       = false;
         activeTokens      = {};
         wdgReassignMode   = false;
+        wdgSel            = {};
+        if (typeof wdgSetAreaMode === 'function') wdgSetAreaMode(false);
         $('#wdg-reassign-bar').hide();
 
         $.post(wdgData.ajaxUrl, {
@@ -526,7 +602,7 @@ var groups   = res.data.groups;
                     if (o.delivered) {
                         html += '<div class="wdg-reassign-cb-cell" title="Entregado: no se puede mover">🔒</div>';
                     } else {
-                        html += '<div class="wdg-reassign-cb-cell"><input type="checkbox" class="wdg-reassign-cb" data-id="'+o.id+'" data-gi="'+i+'"></div>';
+                        html += '<div class="wdg-reassign-cb-cell"><input type="checkbox" class="wdg-reassign-cb" data-id="'+o.id+'" data-gi="'+i+'"'+(wdgSel[o.id] ? ' checked' : '')+'></div>';
                     }
                 }
                 html += '<div class="wdg-order-stop" style="background:'+color+'">'+(idx+1)+'</div>';
@@ -612,7 +688,7 @@ var groups   = res.data.groups;
         markers.forEach(function(m){ m.setMap(null); });
         infoWindows.forEach(function(w){ w.close(); });
         polylines.forEach(function(p){ p.setMap(null); });
-        markers = []; infoWindows = []; polylines = [];
+        markers = []; infoWindows = []; polylines = []; wdgMarkerById = {};
 
         var legendHtml = '<h3>Grupos</h3>';
         if (hasDepot && wdgData.depot.lat) {
@@ -639,13 +715,17 @@ var groups   = res.data.groups;
 
             // Marcadores numerados
             g.orders.forEach(function(o, stopIdx) {
+                var baseIcon = { path: google.maps.SymbolPath.CIRCLE, fillColor: color, fillOpacity:0.95, strokeColor:'#fff', strokeWeight:1.5, scale:13 };
                 var marker = new google.maps.Marker({
                     position: { lat: parseFloat(o.lat), lng: parseFloat(o.lng) },
                     map: map, title: '#'+o.id+' - '+o.address,
                     label: { text: String(stopIdx+1), color:'#fff', fontSize:'11px', fontWeight:'bold' },
-                    icon: { path: google.maps.SymbolPath.CIRCLE, fillColor: color, fillOpacity:0.95, strokeColor:'#fff', strokeWeight:1.5, scale:13 },
+                    icon: baseIcon,
                     groupId: i, zIndex: 50,
                 });
+                marker.orderId  = o.id;
+                marker.baseIcon = baseIcon;
+                wdgMarkerById[o.id] = marker;
 
                 (function(groupIdx, orderIdx, ord) {
                 var iw = new google.maps.InfoWindow({
@@ -664,7 +744,16 @@ var groups   = res.data.groups;
                              '</div>',
                 });
 
-                marker.addListener('click', function(){ infoWindows.forEach(function(w){ w.close(); }); iw.open(map, marker); });
+                marker.addListener('click', function(ev){
+                    // Ctrl/⌘/Shift + click → seleccionar para reasignar (no entregados)
+                    var dom = ev && ev.domEvent;
+                    if (dom && (dom.ctrlKey || dom.metaKey || dom.shiftKey)) {
+                        if (ord.delivered) return;
+                        wdgToggleSel(ord.id);
+                        return;
+                    }
+                    infoWindows.forEach(function(w){ w.close(); }); iw.open(map, marker);
+                });
                 markers.push(marker); infoWindows.push(iw);
                 })(i, stopIdx, o);
             });
@@ -676,6 +765,13 @@ var groups   = res.data.groups;
         }
 
         $('#wdgLegend').html(legendHtml).show();
+
+        // Re-aplicar selección persistente y descartar ids que ya no existen
+        Object.keys(wdgSel).forEach(function(id){
+            if (wdgMarkerById[id]) wdgSelStyle(wdgMarkerById[id], true);
+            else delete wdgSel[id];
+        });
+        wdgRefreshBar();
 
         var bounds = new google.maps.LatLngBounds();
         markers.forEach(function(m){ bounds.extend(m.getPosition()); });
@@ -1141,6 +1237,8 @@ var ok = confirm('⚠️ Importante: Al guardar la planificación, los pedidos q
         planIsSaved       = false;
         activeTokens      = {};
         wdgReassignMode   = false;
+        wdgSel            = {};
+        wdgSetAreaMode(false);
         $('#wdg-reassign-bar').hide();
         switchTab('new');
         $('#wdgGroupsCard, #wdgStatsCard, #wdgSavePlanCard, #wdgProgressCard, #wdgRepartidoresCard, #wdgAddOrdersCard').hide();
@@ -1191,6 +1289,8 @@ var plan = res.data;
             currentGroups = plan.groups;
             planIsSaved   = true;  // plan ya guardado → permitir generar links
             wdgReassignMode = false;
+            wdgSel          = {};
+            wdgSetAreaMode(false);
             $('#wdg-reassign-bar').hide();
             currentConfig = plan.config || {};
 
@@ -1368,6 +1468,151 @@ if (g.token) activeTokens[i] = g.token;
         });
     };
 
+    // ══ SELECCIÓN DE PEDIDOS (lista + mapa) ═══════════════════════════════════
+    function wdgOrderById(id) {
+        var found = null;
+        (currentGroups || []).forEach(function(g) {
+            (g.orders || []).forEach(function(o) { if (o.id == id) found = o; });
+        });
+        return found;
+    }
+
+    function wdgSelIds() {
+        return Object.keys(wdgSel).filter(function(k){ return wdgSel[k]; }).map(Number);
+    }
+
+    function wdgSelStyle(marker, on) {
+        if (!marker) return;
+        if (on) {
+            var sel = Object.assign({}, marker.baseIcon, { scale: 16, strokeColor: '#111827', strokeWeight: 3 });
+            marker.setIcon(sel);
+            marker.setZIndex(200);
+        } else {
+            marker.setIcon(marker.baseIcon);
+            marker.setZIndex(50);
+        }
+    }
+
+    // on === undefined → alterna. fromCb evita re-tocar el checkbox que disparó el cambio.
+    function wdgToggleSel(id, on, fromCb) {
+        if (on === undefined) on = !wdgSel[id];
+        if (on) wdgSel[id] = true; else delete wdgSel[id];
+
+        if (wdgMarkerById[id]) wdgSelStyle(wdgMarkerById[id], on);
+        if (!fromCb) {
+            var $cb = $('.wdg-reassign-cb[data-id="' + id + '"]');
+            if ($cb.length) $cb.prop('checked', on);
+        }
+        wdgRefreshBar();
+    }
+
+    function wdgClearSel() {
+        Object.keys(wdgSel).forEach(function(id){
+            if (wdgMarkerById[id]) wdgSelStyle(wdgMarkerById[id], false);
+        });
+        wdgSel = {};
+        $('.wdg-reassign-cb:checked').prop('checked', false);
+        wdgRefreshBar();
+    }
+
+    // Muestra/actualiza la barra inferior según la selección actual
+    function wdgRefreshBar() {
+        var n = wdgSelIds().length;
+        $('#wdg-reassign-count').text(n + ' seleccionado' + (n === 1 ? '' : 's'));
+
+        // Repoblar destinos preservando la opción elegida
+        var prev = $('#wdg-reassign-target').val();
+        var opts = '';
+        (currentGroups || []).forEach(function(g, gi) {
+            opts += '<option value="' + gi + '">' + escHtml(g.name) + '</option>';
+        });
+        $('#wdg-reassign-target').html(opts);
+        if (prev !== null && prev !== undefined) $('#wdg-reassign-target').val(prev);
+
+        $('#wdg-reassign-bar').css('display', n > 0 ? 'flex' : 'none');
+        $('#wdgSelClearBtn').text('✕ Limpiar (' + n + ')').css('display', n > 0 ? 'inline-block' : 'none');
+    }
+    // Alias para compatibilidad con llamadas existentes
+    function wdgUpdateReassignCount() { wdgRefreshBar(); }
+
+    function wdgSetAreaMode(on) {
+        wdgAreaMode = !!on;
+        $('#wdgAreaBtn').toggleClass('active', wdgAreaMode)
+                        .text(wdgAreaMode ? '▭ Área: ON' : '▭ Seleccionar área');
+        $('#wdgMap').toggleClass('wdg-area-on', wdgAreaMode);
+        if (map) map.setOptions({ draggable: !wdgAreaMode, gestureHandling: wdgAreaMode ? 'none' : 'auto' });
+        if (!wdgAreaMode && wdgSelRect) { wdgSelRect.setMap(null); wdgSelRect = null; wdgDragging = false; }
+    }
+
+    // Botones flotantes del mapa
+    $(document).on('click', '#wdgAreaBtn', function(){ wdgSetAreaMode(!wdgAreaMode); });
+    $(document).on('click', '#wdgSelClearBtn', function(){ wdgClearSel(); });
+
+    // Checkbox de la lista ↔ selección
+    $(document).on('change', '.wdg-reassign-cb', function() {
+        wdgToggleSel(parseInt($(this).data('id')), this.checked, true);
+    });
+
+    // ── Inserción óptima en cliente (planes sin guardar) ──────────────────────
+    function wdgInsertOptimal(groups, toIdx, order) {
+        var dest     = groups[toIdx].orders;
+        var hasDepot = window.wdgHasDepot && wdgData.depot && wdgData.depot.lat;
+        var bestPos  = dest.length, bestDist = Infinity;
+        var startLat = hasDepot ? parseFloat(wdgData.depot.lat) : (dest.length ? parseFloat(dest[0].lat) : parseFloat(order.lat));
+        var startLng = hasDepot ? parseFloat(wdgData.depot.lng) : (dest.length ? parseFloat(dest[0].lng) : parseFloat(order.lng));
+        for (var pos = 0; pos <= dest.length; pos++) {
+            var prev = pos === 0 ? {lat:startLat,lng:startLng} : {lat:parseFloat(dest[pos-1].lat),lng:parseFloat(dest[pos-1].lng)};
+            var next = pos < dest.length ? {lat:parseFloat(dest[pos].lat),lng:parseFloat(dest[pos].lng)}
+                     : (hasDepot ? {lat:parseFloat(wdgData.depot.lat),lng:parseFloat(wdgData.depot.lng)} : prev);
+            var detour = haversine(prev.lat,prev.lng,parseFloat(order.lat),parseFloat(order.lng))
+                       + haversine(parseFloat(order.lat),parseFloat(order.lng),next.lat,next.lng)
+                       - haversine(prev.lat,prev.lng,next.lat,next.lng);
+            if (detour < bestDist) { bestDist = detour; bestPos = pos; }
+        }
+        dest.splice(bestPos, 0, order);
+        groups[toIdx].count++;
+    }
+
+    function wdgRecalcAllKm(groups) {
+        var hasDepot = window.wdgHasDepot && wdgData.depot && wdgData.depot.lat;
+        groups.forEach(function(g) {
+            var pts = [], km = 0;
+            if (hasDepot) pts.push({lat:parseFloat(wdgData.depot.lat),lng:parseFloat(wdgData.depot.lng)});
+            g.orders.forEach(function(o){ pts.push({lat:parseFloat(o.lat),lng:parseFloat(o.lng)}); });
+            if (hasDepot) pts.push({lat:parseFloat(wdgData.depot.lat),lng:parseFloat(wdgData.depot.lng)});
+            for (var i = 1; i < pts.length; i++) km += haversine(pts[i-1].lat,pts[i-1].lng,pts[i].lat,pts[i].lng);
+            g.route_km = Math.round(km * 10) / 10;
+        });
+    }
+
+    // assignments: [{ id, group_idx }] → mueve en cliente y re-renderiza una vez. Devuelve nº movidos.
+    function wdgClientApply(assignments) {
+        var groups   = window.wdgGroups;
+        var toInsert = [];
+        assignments.forEach(function(a){
+            for (var gi = 0; gi < groups.length; gi++) {
+                var idx = groups[gi].orders.findIndex(function(o){ return o.id == a.id; });
+                if (idx > -1) {
+                    if (groups[gi].orders[idx].delivered || gi === a.group_idx) break; // entregado o ya en destino
+                    var o = groups[gi].orders.splice(idx, 1)[0];
+                    groups[gi].count--;
+                    toInsert.push({ order: o, toIdx: a.group_idx });
+                    break;
+                }
+            }
+        });
+        toInsert.forEach(function(t){ wdgInsertOptimal(groups, t.toIdx, t.order); });
+        groups.forEach(function(g){ g.orders.forEach(function(o,i){ o._tsp_idx = i; }); });
+        wdgRecalcAllKm(groups);
+
+        window.wdgGroups = groups; currentGroups = groups;
+        var hasDepot = window.wdgHasDepot && wdgData.depot && wdgData.depot.lat;
+        renderStats(groups.reduce(function(s,g){ return s + g.count; }, 0), 0, groups, (currentConfig.max_per_group || 35), hasDepot);
+        renderGroups(groups, hasDepot);
+        renderMap(groups, hasDepot);
+        return toInsert.length;
+    }
+
     // ══ REASIGNACIÓN MASIVA DE PEDIDOS ENTRE RUTAS ════════════════════════════
     window.wdgToggleReassign = function(on) {
         wdgReassignMode = !!on;
@@ -1378,74 +1623,68 @@ if (g.token) activeTokens[i] = g.token;
             // Expandir todos los grupos para facilitar la selección
             $('.wdg-group-body').addClass('open');
             $('.wdg-group-toggle').text('▲');
-            // Poblar el selector de ruta destino
-            var opts = '';
-            currentGroups.forEach(function(g, gi) {
-                opts += '<option value="' + gi + '">' + escHtml(g.name) + '</option>';
-            });
-            $('#wdg-reassign-target').html(opts);
-            wdgUpdateReassignCount();
+            wdgRefreshBar();
             $('#wdg-reassign-bar').css('display', 'flex');
         } else {
+            wdgSetAreaMode(false);
+            wdgClearSel();
             $('#wdg-reassign-bar').hide();
         }
     };
 
-    function wdgUpdateReassignCount() {
-        var n = $('.wdg-reassign-cb:checked').length;
-        $('#wdg-reassign-count').text(n + ' seleccionado' + (n === 1 ? '' : 's'));
-    }
-
-    $(document).on('change', '.wdg-reassign-cb', function() {
-        wdgUpdateReassignCount();
-    });
-
     window.wdgDoReassign = function(mode) {
-        var $checked = $('.wdg-reassign-cb:checked');
-        if (!$checked.length) { alert('Marca al menos un pedido.'); return; }
-
-        // Lookup id → pedido (para lat/lng en modo automático)
-        var lookup = {};
-        currentGroups.forEach(function(g) {
-            (g.orders || []).forEach(function(o) { lookup[o.id] = o; });
+        // Filtra entregados y pedidos inexistentes
+        var ids = wdgSelIds().filter(function(id){
+            var o = wdgOrderById(id);
+            return o && !o.delivered;
         });
+        if (!ids.length) { alert('Selecciona al menos un pedido (no entregado).'); return; }
 
-        var assignments = [];
-        if (mode === 'auto') {
-            $checked.each(function() {
-                var id = parseInt($(this).data('id'));
-                var o  = lookup[id];
-                if (o) assignments.push({ id: id, group_idx: wdgNearestGroup(o) });
-            });
-        } else {
-            var target = parseInt($('#wdg-reassign-target').val());
+        var target = null;
+        if (mode !== 'auto') {
+            target = parseInt($('#wdg-reassign-target').val());
             if (isNaN(target)) { alert('Elige una ruta destino.'); return; }
-            $checked.each(function() {
-                assignments.push({ id: parseInt($(this).data('id')), group_idx: target });
-            });
         }
 
-        $('#wdg-reassign-bar button').prop('disabled', true);
-        $.post(wdgData.ajaxUrl, {
-            action:      'wdg_reassign_orders',
-            nonce:       wdgData.nonce,
-            plan_id:     currentPlanId,
-            assignments: JSON.stringify(assignments),
-        }, function(res) {
-            $('#wdg-reassign-bar button').prop('disabled', false);
-            if (!res.success) { alert('Error: ' + res.data); return; }
-            wdgReassignMode = false;
-            $('#wdg-reassign-bar').hide();
-            var msg = res.data.moved + ' pedido(s) reasignado(s) y rutas reoptimizadas.';
-            if (res.data.blocked) msg += ' ' + res.data.blocked + ' omitido(s) por estar entregados.';
-            window.wdgLoadPlan(currentPlanId);
-            setTimeout(function() {
-                $('#wdgSavePlanStatus').html('<span style="color:#15803d">✅ ' + msg + '</span>');
-            }, 700);
-        }).fail(function() {
-            $('#wdg-reassign-bar button').prop('disabled', false);
-            alert('Error de conexión');
+        var assignments = ids.map(function(id){
+            var gi = (mode === 'auto') ? wdgNearestGroup(wdgOrderById(id)) : target;
+            return { id: id, group_idx: gi };
         });
+
+        // ── Plan guardado → reasignación en servidor (re-optimiza rutas) ──
+        if (planIsSaved && currentPlanId) {
+            $('#wdg-reassign-bar button').prop('disabled', true);
+            $.post(wdgData.ajaxUrl, {
+                action:      'wdg_reassign_orders',
+                nonce:       wdgData.nonce,
+                plan_id:     currentPlanId,
+                assignments: JSON.stringify(assignments),
+            }, function(res) {
+                $('#wdg-reassign-bar button').prop('disabled', false);
+                if (!res.success) { alert('Error: ' + res.data); return; }
+                wdgReassignMode = false;
+                wdgSel = {};
+                wdgSetAreaMode(false);
+                $('#wdg-reassign-bar').hide();
+                var msg = res.data.moved + ' pedido(s) reasignado(s) y rutas reoptimizadas.';
+                if (res.data.blocked) msg += ' ' + res.data.blocked + ' omitido(s) por estar entregados.';
+                window.wdgLoadPlan(currentPlanId);
+                setTimeout(function() {
+                    $('#wdgSavePlanStatus').html('<span style="color:#15803d">✅ ' + msg + '</span>');
+                }, 700);
+            }).fail(function() {
+                $('#wdg-reassign-bar button').prop('disabled', false);
+                alert('Error de conexión');
+            });
+            return;
+        }
+
+        // ── Plan sin guardar → movimiento en cliente ──
+        wdgSel = {}; // se limpia antes de re-render (renderMap re-aplica lo que quede)
+        wdgSetAreaMode(false);
+        var moved = wdgClientApply(assignments);
+        $('#wdg-reassign-bar').hide();
+        $('#wdgSavePlanStatus').html('<span style="color:#15803d">✅ ' + moved + ' pedido(s) movido(s). Guarda el plan para fijar los cambios.</span>');
     };
 
     // ── Eliminar planificación ────────────────────────────────────────────────
@@ -1468,7 +1707,7 @@ if (res.success) {
 
     // ── Switch de pestañas ────────────────────────────────────────────────────
     function switchTab(tab) {
-        if (tab !== 'new') { wdgReassignMode = false; $('#wdg-reassign-bar').hide(); }
+        if (tab !== 'new') { wdgReassignMode = false; wdgSel = {}; wdgSetAreaMode(false); $('#wdg-reassign-bar').hide(); }
         $('.wdg-tab').removeClass('wdg-tab--active');
         $('.wdg-tab-content').hide();
         $('.wdg-tab[data-tab="'+tab+'"]').addClass('wdg-tab--active');
