@@ -454,20 +454,8 @@ if (orders.length < maxima.length) { alert('Menos pedidos ('+orders.length+') qu
             if (!res.success) { alert('Error: ' + res.data); return; }
 var groups   = res.data.groups;
             var hasDepot = res.data.has_depot;
-            // Enriquecer grupos con info del repartidor seleccionado
-            groups.forEach(function(g, i) {
-                var $sel = $('.wdg-rep-select[data-idx="'+i+'"]');
-                if ($sel.length) {
-                    var selId = $sel.val();
-                    if (selId) {
-                        var drv = wdgDrivers.find(function(d){ return d.id === selId; });
-                        if (drv) {
-                            g.driver_id   = drv.id;
-                            g.driver_name = drv.nombre;
-                        }
-                    }
-                }
-            });
+            // Enriquecer grupos con info del repartidor y vehículo seleccionados
+            groups.forEach(function(g, i) { wdgEnrichGroupAssignment(g, i); });
             window.wdgGroups = groups;
             renderStats(orders.length, 0, groups, maxima[0]||35, hasDepot);
             renderGroups(groups, hasDepot);
@@ -498,6 +486,36 @@ var groups   = res.data.groups;
 
     function statBox(val, lbl, cls) {
         return '<div class="wdg-stat'+(cls?' wdg-stat--'+cls:'')+'"><div class="wdg-stat-val">'+val+'</div><div class="wdg-stat-lbl">'+lbl+'</div></div>';
+    }
+
+    // Lee los selects de repartidor/vehículo del grupo i y los guarda en el grupo
+    function wdgEnrichGroupAssignment(g, i) {
+        var $drv = $('.wdg-rep-select[data-idx="'+i+'"]');
+        if ($drv.length && $drv.val()) {
+            var drv = wdgDrivers.find(function(d){ return d.id === $drv.val(); });
+            if (drv) { g.driver_id = drv.id; g.driver_name = drv.nombre; }
+        }
+        var $veh = $('.wdg-veh-select[data-idx="'+i+'"]');
+        if ($veh.length && $veh.val()) {
+            var veh = wdgVehicles.find(function(v){ return v.id === $veh.val(); });
+            if (veh) {
+                g.vehicle_id      = veh.id;
+                g.vehicle_patente = veh.patente;
+                g.vehicle         = veh.patente + ' (' + veh.tipo + ')';
+            }
+        }
+    }
+
+    // Patente asignada al grupo i: del select vivo o de lo persistido en el grupo
+    function wdgGroupVehiclePatente(g, i) {
+        var $veh = $('.wdg-veh-select[data-idx="'+i+'"]');
+        if ($veh.length && $veh.val()) {
+            var veh = wdgVehicles.find(function(v){ return v.id === $veh.val(); });
+            if (veh) return veh.patente;
+        }
+        if (g && g.vehicle_patente) return g.vehicle_patente;
+        if (g && g.vehicle) return String(g.vehicle).split(' (')[0]; // label "PATENTE (Tipo)"
+        return '';
     }
 
     // ── Lista de grupos ───────────────────────────────────────────────────────
@@ -535,11 +553,17 @@ var groups   = res.data.groups;
             // Si no hay select (plan cargado), usar g.driver_name si existe
             if (!driverName && g.driver_name) driverName = g.driver_name;
 
+            // Patente del vehículo asignado
+            var vehPat = wdgGroupVehiclePatente(g, i);
+
             html += '<div class="wdg-group-header" onclick="wdgToggleGroup('+i+')">';
             html += '<div class="wdg-group-dot" style="background:'+color+'"></div>';
             html += '<div class="wdg-group-title-wrap">';
-            if (driverName) {
-                html += '<div class="wdg-group-title">'+escHtml(g.name)+' <span class="wdg-group-driver">— '+escHtml(driverName)+'</span></div>';
+            if (driverName || vehPat) {
+                var extra = '';
+                if (driverName) extra += '<span class="wdg-group-driver">— '+escHtml(driverName)+'</span>';
+                if (vehPat)     extra += ' <span class="wdg-group-veh">🚗 '+escHtml(vehPat)+'</span>';
+                html += '<div class="wdg-group-title">'+escHtml(g.name)+' '+extra+'</div>';
             } else {
                 html += '<div class="wdg-group-title">'+escHtml(g.name)+'</div>';
             }
@@ -1105,6 +1129,9 @@ if (!currentGroups.length) { alert('Genera los grupos primero.'); return; }
 var ok = confirm('⚠️ Importante: Al guardar la planificación, los pedidos quedarán fijos a cada repartidor.\n\nUna vez guardado, NO podrás mover pedidos entre rutas.\n\n¿Deseas continuar y guardar?');
             if (!ok) return;
         }
+
+        // Asegurar repartidor/vehículo actuales en cada grupo antes de persistir
+        currentGroups.forEach(function(g, i){ wdgEnrichGroupAssignment(g, i); });
 
         $('#btnSavePlan').prop('disabled', true).text('Guardando…');
         $('#wdgSavePlanStatus').html('');

@@ -892,6 +892,12 @@
 /* ── Nombre repartidor en grupo ──────────────────────────── */
 .wdg-group-title-wrap { display:flex; align-items:center; }
 .wdg-group-driver { font-size:13px; color:#64748b; font-weight:400; }
+.wdg-group-veh {
+    display:inline-block; margin-left:6px; padding:1px 7px;
+    background:#eef2ff; color:#3730a3; border:1px solid #c7d2fe;
+    border-radius:10px; font-size:11px; font-weight:600; letter-spacing:.3px;
+    white-space:nowrap; vertical-align:middle;
+}
 
 /* ── Plan ID badge ──────────────────────────── */
 .wdg-plan-id {
