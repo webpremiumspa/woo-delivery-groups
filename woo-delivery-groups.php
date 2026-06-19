@@ -649,7 +649,6 @@ class Woo_Delivery_Groups {
         check_ajax_referer( 'wdg_nonce', 'nonce' );
 
         $orders      = json_decode( stripslashes($_POST['orders'] ?? '[]'), true );
-        $names       = sanitize_text_field( $_POST['names'] ?? '' );
         $maxima      = json_decode( stripslashes($_POST['maxima'] ?? '[]'), true );
 
         if ( empty($orders) ) { wp_send_json_error('Sin pedidos'); }
@@ -684,7 +683,6 @@ class Woo_Delivery_Groups {
         $groups = $best['labels'];
 
         // ── Armar grupos y aplicar TSP con bodega ─────────────────────────────
-        $name_list = array_values( array_filter( array_map('trim', explode(',', $names)) ) );
         $result    = array();
 
         for ( $g = 0; $g < $k; $g++ ) {
@@ -715,7 +713,7 @@ class Woo_Delivery_Groups {
 
             $result[] = array(
                 'group_id'          => $g,
-                'name'              => isset($name_list[$g]) ? $name_list[$g] : 'R' . ($g+1),
+                'name'              => 'R' . ($g+1),
                 'count'             => count($group_orders),
                 'center'            => array('lat' => $center_lat, 'lng' => $center_lng),
                 'route_km'          => $route_km,
