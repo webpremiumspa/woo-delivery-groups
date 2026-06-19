@@ -1407,9 +1407,19 @@ class Woo_Delivery_Groups {
         $now        = current_time('mysql');
         $route_date = current_time('Y-m-d');
 
-        foreach ( ($group['orders'] ?? array()) as $order ) {
+        foreach ( ($group['orders'] ?? array()) as $stop_idx => $order ) {
             $order_id = intval($order['id'] ?? 0);
             if ( ! $order_id ) continue;
+
+            // Guardar metas de ruta en el pedido WooCommerce (persiste en el pedido)
+            $wc_order = wc_get_order( $order_id );
+            if ( $wc_order ) {
+                $wc_order->update_meta_data( '_wdg_route',         $group['name'] ?? '' );
+                $wc_order->update_meta_data( '_wdg_plan_id',       $plan_id );
+                $wc_order->update_meta_data( '_wdg_plan_name',     $plan_name );
+                $wc_order->update_meta_data( '_wdg_stop_position', intval($stop_idx) + 1 );
+                $wc_order->save();
+            }
 
             $products_json = wp_json_encode(
                 array_map(function($it){
@@ -1829,9 +1839,26 @@ class Woo_Delivery_Groups {
         $delivered_by  = $order->get_meta('_wdg_delivered_by');
         $delivered_date= $order->get_meta('_wdg_delivered_date');
 
+        $wdg_route     = $order->get_meta('_wdg_route');
+        $wdg_plan_name = $order->get_meta('_wdg_plan_name');
+        $wdg_stop_pos  = $order->get_meta('_wdg_stop_position');
+
         $api_key = $this->get_api_key();
         ?>
         <div style="font-size:12px">
+
+        <?php if ( $wdg_route || $wdg_plan_name ) : ?>
+            <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:8px;margin:0 0 10px;color:#1e3a8a">
+                <?php if ( $wdg_route ) : ?>
+                <p style="margin:0 0 2px;font-weight:600">📦 <?php echo esc_html($wdg_route); ?>
+                    <?php if ( $wdg_stop_pos ) : ?>&nbsp;·&nbsp; Parada #<?php echo esc_html($wdg_stop_pos); ?><?php endif; ?>
+                </p>
+                <?php endif; ?>
+                <?php if ( $wdg_plan_name ) : ?>
+                <p style="margin:0;font-size:11px">📋 <?php echo esc_html($wdg_plan_name); ?></p>
+                <?php endif; ?>
+            </div>
+        <?php endif; ?>
 
         <?php if ( $lat && $lng ) : ?>
             <p style="margin:0 0 6px"><strong>Facturación</strong></p>
