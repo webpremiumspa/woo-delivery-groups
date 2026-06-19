@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WooCommerce Delivery Groups
  * Description: Agrupa pedidos por cercanía geográfica (K-Means++) y optimiza rutas de reparto (TSP). Considera bodega como punto de inicio y retorno.
- * Version:     2.11.0
+ * Version:     2.13.0
  * Author:      Webpremium Chile
  * Text Domain: woo-delivery-groups
  */
@@ -12,7 +12,7 @@ defined( 'ABSPATH' ) || exit;
 class Woo_Delivery_Groups {
 
     const SLUG        = 'woo-delivery-groups';
-    const VERSION     = '2.11.0';
+    const VERSION     = '2.13.0';
     const OPT_API_KEY = 'wga_google_maps_api_key';
     const OPT_DEPOT       = 'wdg_depot';       // array: address, lat, lng
     const OPT_SEND_EMAIL  = 'wdg_send_photo_email'; // 1 = enviar, 0 = no enviar
@@ -1409,6 +1409,25 @@ class Woo_Delivery_Groups {
         }
     }
 
+    // Borra los metas de ruta de los pedidos de un plan (al eliminar la
+    // planificación). Solo limpia el pedido si sigue perteneciendo a este plan.
+    private function clear_plan_order_metas( $plan, $plan_id ) {
+        foreach ( ($plan['groups'] ?? array()) as $group ) {
+            foreach ( ($group['orders'] ?? array()) as $order ) {
+                $order_id = intval($order['id'] ?? 0);
+                if ( ! $order_id ) continue;
+                $wc_order = wc_get_order( $order_id );
+                if ( ! $wc_order ) continue;
+                if ( (string) $wc_order->get_meta('_wdg_plan_id') !== (string) $plan_id ) continue;
+                $wc_order->delete_meta_data( '_wdg_route' );
+                $wc_order->delete_meta_data( '_wdg_plan_id' );
+                $wc_order->delete_meta_data( '_wdg_plan_name' );
+                $wc_order->delete_meta_data( '_wdg_stop_position' );
+                $wc_order->save();
+            }
+        }
+    }
+
     private function insert_assigned_events( $payload ) {
         global $wpdb;
         $table      = $this->events_table();
@@ -2386,6 +2405,12 @@ class Woo_Delivery_Groups {
 
         $plan_id = sanitize_text_field( $_POST['plan_id'] ?? '' );
         if ( empty($plan_id) ) { wp_send_json_error('ID requerido'); }
+
+        // Limpiar los metas de ruta de los pedidos antes de borrar el plan
+        $plan = get_option( $this->get_plan_key($plan_id) );
+        if ( is_array($plan) ) {
+            $this->clear_plan_order_metas( $plan, $plan_id );
+        }
 
         delete_option( $this->get_plan_key($plan_id) );
 
