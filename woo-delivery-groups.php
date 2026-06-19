@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WooCommerce Delivery Groups
  * Description: Agrupa pedidos por cercanía geográfica (K-Means++) y optimiza rutas de reparto (TSP). Considera bodega como punto de inicio y retorno.
- * Version:     2.13.0
+ * Version:     2.15.0
  * Author:      Webpremium Chile
  * Text Domain: woo-delivery-groups
  */
@@ -12,7 +12,7 @@ defined( 'ABSPATH' ) || exit;
 class Woo_Delivery_Groups {
 
     const SLUG        = 'woo-delivery-groups';
-    const VERSION     = '2.13.0';
+    const VERSION     = '2.15.0';
     const OPT_API_KEY = 'wga_google_maps_api_key';
     const OPT_DEPOT       = 'wdg_depot';       // array: address, lat, lng
     const OPT_SEND_EMAIL  = 'wdg_send_photo_email'; // 1 = enviar, 0 = no enviar
@@ -183,17 +183,8 @@ class Woo_Delivery_Groups {
                     <div class="wdg-card">
                         <h2>⚙️ Configuración</h2>
                         <div class="wdg-field">
-                            <label>Desde</label>
-                            <input type="date" id="wdgDateFrom" value="<?php echo esc_attr(date('Y-m-d', strtotime('-1 day'))); ?>">
-                        </div>
-                        <div class="wdg-field">
-                            <label>Hasta</label>
-                            <input type="date" id="wdgDateTo" value="<?php echo esc_attr(date('Y-m-d', strtotime('-1 day'))); ?>">
-                        </div>
-                        <div class="wdg-field">
                             <label>Estado de pedido</label>
                             <select id="wdgStatus">
-                                <option value="any">Todos</option>
                                 <?php
                                 $all_statuses = wc_get_order_statuses();
                                 $default      = 'wc-en-ruta';
@@ -588,11 +579,14 @@ class Woo_Delivery_Groups {
     // ── Consulta de pedidos geocodificados (reutilizable) ─────────────────────
     private function fetch_orders( $date_from, $date_to, $status, $exclude_delivered = '0' ) {
         $args = array(
-            'limit'        => 1000,
-            'orderby'      => 'date',
-            'order'        => 'DESC',
-            'date_created' => $date_from . '...' . $date_to . ' 23:59:59',
+            'limit'   => 1000,
+            'orderby' => 'date',
+            'order'   => 'DESC',
         );
+        // Filtro de fecha opcional: sin rango, trae todos los pedidos del estado
+        if ( $date_from && $date_to ) {
+            $args['date_created'] = $date_from . '...' . $date_to . ' 23:59:59';
+        }
         if ( $status !== 'any' ) $args['status'] = str_replace('wc-', '', $status);
 
         $orders  = wc_get_orders($args);
@@ -1396,12 +1390,16 @@ class Woo_Delivery_Groups {
     // Escribe los metas de ruta (_wdg_route, _wdg_plan_id, _wdg_plan_name,
     // _wdg_stop_position) en cada pedido WooCommerce de un grupo.
     private function write_order_route_metas( $group, $plan_id, $plan_name ) {
+        // Nombre de ruta = "Rx - Nombre repartidor" (o solo "Rx" si no hay repartidor)
+        $driver     = trim( $group['driver_name'] ?? '' );
+        $route_name = ( $group['name'] ?? '' ) . ( $driver !== '' ? ' - ' . $driver : '' );
+
         foreach ( ($group['orders'] ?? array()) as $stop_idx => $order ) {
             $order_id = intval($order['id'] ?? 0);
             if ( ! $order_id ) continue;
             $wc_order = wc_get_order( $order_id );
             if ( ! $wc_order ) continue;
-            $wc_order->update_meta_data( '_wdg_route',         $group['name'] ?? '' );
+            $wc_order->update_meta_data( '_wdg_route',         $route_name );
             $wc_order->update_meta_data( '_wdg_plan_id',       $plan_id );
             $wc_order->update_meta_data( '_wdg_plan_name',     $plan_name );
             $wc_order->update_meta_data( '_wdg_stop_position', intval($stop_idx) + 1 );
@@ -2433,16 +2431,11 @@ class Woo_Delivery_Groups {
         $plan = get_option( $this->get_plan_key($plan_id) );
         if ( empty($plan) ) { wp_send_json_error('Plan no encontrado'); }
 
-        $config    = $plan['config'] ?? array();
-        $date_from = $config['date_from'] ?? '';
-        $status    = $config['status']    ?? 'any';
-        // Extender el rango hasta hoy para captar pedidos posteriores al plan
-        $date_to   = current_time('Y-m-d');
-        if ( ! empty($config['date_to']) && $config['date_to'] > $date_to ) {
-            $date_to = $config['date_to'];
-        }
+        $config = $plan['config'] ?? array();
+        $status = $config['status'] ?? 'any';
 
-        $data = $this->fetch_orders( $date_from, $date_to, $status, '0' );
+        // Sin rango de fechas: todos los pedidos del estado que no estén ya asignados
+        $data = $this->fetch_orders( '', '', $status, '0' );
 
         // IDs ya asignados en cualquier grupo del plan
         $assigned = array();
@@ -2460,11 +2453,9 @@ class Woo_Delivery_Groups {
         }
 
         wp_send_json_success( array(
-            'orders'    => $new_orders,
-            'count'     => count($new_orders),
-            'date_from' => $date_from,
-            'date_to'   => $date_to,
-            'skipped'   => $data['skipped'],
+            'orders'  => $new_orders,
+            'count'   => count($new_orders),
+            'skipped' => $data['skipped'],
         ) );
     }
 

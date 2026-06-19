@@ -220,13 +220,11 @@ jQuery(document).ready(function ($) {
     // ── Paso 1: Buscar pedidos ───────────────────────────────────────────────
     $('#btnSearch').on('click', function () {
         var maxPerGroup = parseInt($('#wdgMaxPerGroup').val()) || 35;
-        var dateFrom    = $('#wdgDateFrom').val();
-        var dateTo      = $('#wdgDateTo').val();
         var status      = $('#wdgStatus').val();
         var names       = $('#wdgNames').val();
 
-        currentConfig = { max_per_group:maxPerGroup, date_from:dateFrom,
-                          date_to:dateTo, status:status, names:names,
+        currentConfig = { max_per_group:maxPerGroup,
+                          status:status, names:names,
                           exclude_delivered: '0' };
 
         $('#btnSearch').prop('disabled', true).text('Buscando…');
@@ -247,8 +245,6 @@ jQuery(document).ready(function ($) {
         $.post(wdgData.ajaxUrl, {
             action:            'wdg_get_orders',
             nonce:             wdgData.nonce,
-            date_from:         dateFrom,
-            date_to:           dateTo,
             status:            status,
             exclude_delivered: currentConfig.exclude_delivered,
         }, function(res) {
@@ -409,8 +405,6 @@ window.wdgOrders = res.data.orders;
     // ── Paso 2: Generar rutas ────────────────────────────────────────────────
     $('#btnProcess').on('click', function () {
         var maxPerGroup = parseInt($('#wdgMaxPerGroup').val()) || 35;
-        var dateFrom    = currentConfig.date_from || $('#wdgDateFrom').val();
-        var dateTo      = currentConfig.date_to   || $('#wdgDateTo').val();
         var status      = currentConfig.status    || $('#wdgStatus').val();
         var names       = $('#wdgNames').val();
 
@@ -427,13 +421,12 @@ window.wdgOrders = res.data.orders;
         });
         $('#wdgNames').val(namesList.join(','));
 
-        currentConfig = { max_per_group:maxPerGroup, date_from:dateFrom,
-                          date_to:dateTo, status:status, names:names,
+        currentConfig = { max_per_group:maxPerGroup,
+                          status:status, names:names,
                           maxima:maxima, k:maxima.length,
                           exclude_delivered: '0' };
 
-        if (!dateFrom || !dateTo) { alert('Selecciona rango de fechas.'); return; }
-if (maxima.length < 1) { alert('Primero busca los pedidos.'); return; }
+        if (maxima.length < 1) { alert('Primero busca los pedidos.'); return; }
 
         $(this).prop('disabled', true);
         var orders = window.wdgOrders || [];
@@ -722,7 +715,8 @@ var groups   = res.data.groups;
         groups.forEach(function(g, i) {
             var color = GROUP_COLORS[i % GROUP_COLORS.length];
             var kmInfo = g.route_km > 0 ? ' <span style="color:#888;font-size:10px">~'+g.route_km+'km</span>' : '';
-            legendHtml += '<div class="wdg-legend-item"><div class="wdg-legend-dot" style="background:'+color+'"></div>'+escHtml(g.name)+' ('+g.count+')'+kmInfo+'</div>';
+            var drvName = g.driver_name ? ' - '+escHtml(g.driver_name) : '';
+            legendHtml += '<div class="wdg-legend-item"><div class="wdg-legend-dot" style="background:'+color+'"></div>'+escHtml(g.name)+drvName+' ('+g.count+')'+kmInfo+'</div>';
 
             // Polyline: bodega → paradas → bodega
             var path = [];
@@ -1205,8 +1199,8 @@ var ok = confirm('⚠️ Importante: Al guardar la planificación, los pedidos q
             var barColor = pct >= 100 ? '#4caf50' : '#2271b1';
             var status   = pct >= 100 ? '✅ Completado' : (pct > 0 ? '🚚 En curso' : '📋 Sin iniciar');
             var cfgStr   = '';
-            if (p.config) {
-                cfgStr = escHtml(p.config.date_from||'') + (p.config.date_to !== p.config.date_from ? ' → '+escHtml(p.config.date_to||'') : '');
+            if (p.config && p.config.status) {
+                cfgStr = escHtml((p.config.status||'').replace('wc-',''));
             }
             html += '<div class="wdg-plan-card" id="plan-'+escHtml(p.id)+'">';
             html += '<div class="wdg-plan-card-header">';
@@ -1275,12 +1269,6 @@ var ok = confirm('⚠️ Importante: Al guardar la planificación, los pedidos q
         $('#wdgSavePlanStatus').html('');
         $('#btnSavePlan').text('💾 Guardar');
         $('#btnProcess').prop('disabled', true);
-        // Resetear fechas a ayer/hoy
-        var now  = new Date();
-        var ayer = new Date(now); ayer.setDate(now.getDate() - 1);
-        var fmt  = function(d){ return d.toISOString().split('T')[0]; };
-        $('#wdgDateFrom').val(fmt(ayer));
-        $('#wdgDateTo').val(fmt(now));
     }
 
     window.wdgNewPlan = function() {
@@ -1329,8 +1317,6 @@ if (g.token) activeTokens[i] = g.token;
 
             // Restaurar config en el form
             if (plan.config) {
-                $('#wdgDateFrom').val(plan.config.date_from || '');
-                $('#wdgDateTo').val(plan.config.date_to || '');
                 $('#wdgStatus').val(plan.config.status || 'any');
                 $('#wdgGroups').val(plan.config.k || 3);
                 $('#wdgMaxPerGroup').val(plan.config.max_per_group || 35);
@@ -1422,9 +1408,8 @@ if (g.token) activeTokens[i] = g.token;
                 return;
             }
             var orders = res.data.orders || [];
-            var rango  = '(rango ' + escHtml(res.data.date_from) + ' → ' + escHtml(res.data.date_to) + ')';
             if (!orders.length) {
-                $('#wdgAddOrdersStatus').html('<span style="color:#15803d">✅ No hay pedidos nuevos sin asignar ' + rango + '.</span>');
+                $('#wdgAddOrdersStatus').html('<span style="color:#15803d">✅ No hay pedidos nuevos sin asignar.</span>');
                 return;
             }
             // Asignación automática a la ruta más cercana
@@ -1433,7 +1418,7 @@ if (g.token) activeTokens[i] = g.token;
                 return o;
             });
             $('#wdgAddOrdersStatus').html('<span style="color:#0369a1"><strong>' + orders.length +
-                '</strong> pedido(s) nuevo(s) ' + rango + '. Revisa la asignación y confirma.</span>');
+                '</strong> pedido(s) nuevo(s). Revisa la asignación y confirma.</span>');
             wdgRenderNewOrders();
             $('#wdgNewOrdersPanel').show();
         }).fail(function() {
@@ -1812,15 +1797,6 @@ if (res.success) {
     loadPlansList();
     loadDrivers(function(){});
     loadVehicles(function(){});
-
-    // Fechas por defecto: ayer → hoy
-    (function() {
-        var now  = new Date();
-        var ayer = new Date(now); ayer.setDate(now.getDate() - 1);
-        var fmt  = function(d) { return d.toISOString().split('T')[0]; };
-        $('#wdgDateFrom').val(fmt(ayer));
-        $('#wdgDateTo').val(fmt(now));
-    })();
 
     // Auto-guardar tokens cuando se generan (actualizar plan si ya existe).
     // IMPORTANTE: el save se hace DENTRO del callback del token (no con setTimeout)
