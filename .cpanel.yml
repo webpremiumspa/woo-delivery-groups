@@ -1,7 +1,8 @@
 ---
 deployment:
   tasks:
-    - export DEPLOYPATH=/home/chimuelo/dev.chimuelo.cl/wp-content/plugins/woo-delivery-groups
+    - export BRANCH=$(git rev-parse --abbrev-ref HEAD)
+    - if [ "$BRANCH" = "main" ]; then export DEPLOYPATH=/home/chimuelo/public_html/wp-content/plugins/woo-delivery-groups; else export DEPLOYPATH=/home/chimuelo/dev.chimuelo.cl/wp-content/plugins/woo-delivery-groups; fi
     - /bin/mkdir -p $DEPLOYPATH
     - /bin/cp -f woo-delivery-groups.php $DEPLOYPATH
     - /bin/cp -Rf assets $DEPLOYPATH

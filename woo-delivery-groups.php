@@ -1395,6 +1395,22 @@ class Woo_Delivery_Groups {
 
     // ── Insertar/actualizar eventos al generar link de conductor ─────────────
 
+    // Escribe los metas de ruta (_wdg_route, _wdg_plan_id, _wdg_plan_name,
+    // _wdg_stop_position) en cada pedido WooCommerce de un grupo.
+    private function write_order_route_metas( $group, $plan_id, $plan_name ) {
+        foreach ( ($group['orders'] ?? array()) as $stop_idx => $order ) {
+            $order_id = intval($order['id'] ?? 0);
+            if ( ! $order_id ) continue;
+            $wc_order = wc_get_order( $order_id );
+            if ( ! $wc_order ) continue;
+            $wc_order->update_meta_data( '_wdg_route',         $group['name'] ?? '' );
+            $wc_order->update_meta_data( '_wdg_plan_id',       $plan_id );
+            $wc_order->update_meta_data( '_wdg_plan_name',     $plan_name );
+            $wc_order->update_meta_data( '_wdg_stop_position', intval($stop_idx) + 1 );
+            $wc_order->save();
+        }
+    }
+
     private function insert_assigned_events( $payload ) {
         global $wpdb;
         $table      = $this->events_table();
@@ -1407,19 +1423,12 @@ class Woo_Delivery_Groups {
         $now        = current_time('mysql');
         $route_date = current_time('Y-m-d');
 
-        foreach ( ($group['orders'] ?? array()) as $stop_idx => $order ) {
+        // Guardar metas de ruta en cada pedido WooCommerce (persiste en el pedido)
+        $this->write_order_route_metas( $group, $plan_id, $plan_name );
+
+        foreach ( ($group['orders'] ?? array()) as $order ) {
             $order_id = intval($order['id'] ?? 0);
             if ( ! $order_id ) continue;
-
-            // Guardar metas de ruta en el pedido WooCommerce (persiste en el pedido)
-            $wc_order = wc_get_order( $order_id );
-            if ( $wc_order ) {
-                $wc_order->update_meta_data( '_wdg_route',         $group['name'] ?? '' );
-                $wc_order->update_meta_data( '_wdg_plan_id',       $plan_id );
-                $wc_order->update_meta_data( '_wdg_plan_name',     $plan_name );
-                $wc_order->update_meta_data( '_wdg_stop_position', intval($stop_idx) + 1 );
-                $wc_order->save();
-            }
 
             $products_json = wp_json_encode(
                 array_map(function($it){
@@ -2277,6 +2286,11 @@ class Woo_Delivery_Groups {
             'progress_by_group' => $index[$plan_id]['progress_by_group'] ?? array(),
         );
         update_option('wdg_plans_index', $index);
+
+        // Etiquetar los pedidos del plan con los metas de ruta (sin regenerar links)
+        foreach ( $groups as $group ) {
+            $this->write_order_route_metas( $group, $plan_id, $plan_name );
+        }
 
         wp_send_json_success( array('plan_id' => $plan_id, 'name' => $plan_name) );
     }
