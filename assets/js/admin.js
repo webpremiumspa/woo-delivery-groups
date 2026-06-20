@@ -22,6 +22,7 @@ var wdgReassignMode = false; // modo reasignación masiva de pedidos
 // ── Selección de pedidos en el mapa (área + ctrl/shift-click) ───────────────
 var wdgSel          = {};    // { orderId: true } pedidos seleccionados
 var wdgMarkerById   = {};    // { orderId: marker }
+var wdgPulse        = {};    // estado de la animación "latido" del buscador
 var wdgAreaMode     = false; // dibujar rectángulo de selección al arrastrar
 var wdgDragging     = false; // arrastre de rectángulo en curso
 var wdgSelStart     = null;  // LatLng inicial del rectángulo
@@ -96,6 +97,19 @@ jQuery(document).ready(function ($) {
             '<button id="wdgAreaBtn" type="button" title="Arrastra para seleccionar pedidos dentro de un rectángulo">▭ Seleccionar área</button>' +
             '<button id="wdgSelClearBtn" type="button" style="display:none">✕ Limpiar (0)</button>';
         map.controls[google.maps.ControlPosition.TOP_LEFT].push(tools);
+
+        // Buscador de pedido por ID sobre el mapa
+        var searchBox = document.createElement('div');
+        searchBox.className = 'wdg-map-search';
+        searchBox.innerHTML =
+            '<input type="number" id="wdgOrderSearch" placeholder="Buscar pedido #ID">' +
+            '<button id="wdgOrderSearchBtn" type="button" title="Buscar y resaltar en el mapa">🔍</button>' +
+            '<span id="wdgOrderSearchMsg"></span>';
+        map.controls[google.maps.ControlPosition.TOP_RIGHT].push(searchBox);
+        searchBox.querySelector('#wdgOrderSearchBtn').addEventListener('click', wdgSearchOrderOnMap);
+        searchBox.querySelector('#wdgOrderSearch').addEventListener('keydown', function(ev){
+            if (ev.key === 'Enter') { ev.preventDefault(); wdgSearchOrderOnMap(); }
+        });
 
         var mapEl = document.getElementById('wdgMap');
 
@@ -807,6 +821,54 @@ var groups   = res.data.groups;
                 }
             });
         }
+    }
+
+    // ── Buscar un pedido por ID en el mapa y resaltarlo con efecto "latido" ─────
+    function wdgSearchOrderOnMap() {
+        var $msg  = $('#wdgOrderSearchMsg');
+        var raw   = ($('#wdgOrderSearch').val() || '').toString().trim();
+        if (!raw) { $msg.text('').removeClass('ok err'); return; }
+
+        var marker = wdgMarkerById[raw] || wdgMarkerById[parseInt(raw, 10)];
+        if (!marker) {
+            $msg.text('No está en el mapa').removeClass('ok').addClass('err');
+            return;
+        }
+        $msg.text('').removeClass('ok err');
+
+        map.panTo(marker.getPosition());
+        if (map.getZoom() < 15) map.setZoom(15);
+        // Abrir su info window (reutiliza el listener de click del marcador)
+        google.maps.event.trigger(marker, 'click');
+        wdgPulseMarker(marker);
+    }
+
+    // Anima el "scale" del icono del marcador como un latido (~3s) y restaura.
+    function wdgPulseMarker(marker) {
+        // Cancelar un latido previo y restaurar su marcador
+        if (wdgPulse.raf)    cancelAnimationFrame(wdgPulse.raf);
+        if (wdgPulse.marker) wdgPulse.marker.setIcon(wdgPulse.marker.baseIcon || wdgPulse.base);
+
+        var base      = marker.baseIcon || marker.getIcon();
+        var baseScale = (base && base.scale) ? base.scale : 13;
+        var duration  = 3000;
+        var start     = (window.performance && performance.now) ? performance.now() : Date.now();
+        wdgPulse = { marker: marker, base: base, raf: null };
+
+        function frame(now) {
+            var t = (now - start) / duration;
+            if (t >= 1) {
+                marker.setIcon(base);
+                wdgPulse = {};
+                return;
+            }
+            // 6 latidos; el icono crece hasta +70% y vuelve
+            var pulse = Math.abs(Math.sin(t * Math.PI * 6));
+            var icon  = Object.assign({}, base, { scale: baseScale * (1 + 0.7 * pulse) });
+            marker.setIcon(icon);
+            wdgPulse.raf = requestAnimationFrame(frame);
+        }
+        wdgPulse.raf = requestAnimationFrame(frame);
     }
 
     // ── Google Maps URL con bodega ────────────────────────────────────────────

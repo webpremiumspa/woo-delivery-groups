@@ -694,6 +694,28 @@
 #wdgMap.wdg-area-on, #wdgMap.wdg-area-on * { cursor: crosshair !important; }
 #wdgMap.wdg-area-on .wdg-map-tools, #wdgMap.wdg-area-on .wdg-map-tools * { cursor: pointer !important; }
 
+/* ── Buscador de pedido sobre el mapa ──────── */
+.wdg-map-search {
+    display: flex; align-items: center; gap: 4px;
+    margin: 10px 10px 0 0; background: #fff;
+    border: 1px solid #c3c4c7; border-radius: 4px;
+    padding: 4px 6px; box-shadow: 0 1px 3px rgba(0,0,0,.18);
+}
+.wdg-map-search input {
+    border: none; outline: none; font-size: 12px; width: 130px; padding: 2px 4px;
+    -moz-appearance: textfield;
+}
+.wdg-map-search input::-webkit-outer-spin-button,
+.wdg-map-search input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.wdg-map-search button {
+    background: #2271b1; border: none; border-radius: 4px; color: #fff;
+    padding: 4px 8px; font-size: 12px; cursor: pointer;
+}
+.wdg-map-search button:hover { background: #135e96; }
+.wdg-map-search #wdgOrderSearchMsg { font-size: 11px; font-weight: 600; }
+.wdg-map-search #wdgOrderSearchMsg.err { color: #b91c1c; }
+.wdg-map-search #wdgOrderSearchMsg.ok  { color: #15803d; }
+
 /* ── Tabla de pedidos nuevos (añadir a plan) ──────── */
 .wdg-new-orders-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .wdg-new-orders-table th,
