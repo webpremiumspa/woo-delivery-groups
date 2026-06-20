@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WooCommerce Delivery Groups
  * Description: Agrupa pedidos por cercanía geográfica (K-Means++) y optimiza rutas de reparto (TSP). Considera bodega como punto de inicio y retorno.
- * Version:     2.16.1
+ * Version:     2.17.0
  * Author:      Webpremium Chile
  * Text Domain: woo-delivery-groups
  */
@@ -12,7 +12,7 @@ defined( 'ABSPATH' ) || exit;
 class Woo_Delivery_Groups {
 
     const SLUG        = 'woo-delivery-groups';
-    const VERSION     = '2.16.1';
+    const VERSION     = '2.17.0';
     const OPT_API_KEY = 'wga_google_maps_api_key';
     const OPT_DEPOT       = 'wdg_depot';       // array: address, lat, lng
     const OPT_SEND_EMAIL  = 'wdg_send_photo_email'; // 1 = enviar, 0 = no enviar
@@ -1394,6 +1394,14 @@ class Woo_Delivery_Groups {
         $driver     = trim( $group['driver_name'] ?? '' );
         $route_name = ( $group['name'] ?? '' ) . ( $driver !== '' ? ' - ' . $driver : '' );
 
+        // Repartidor y vehículo del grupo
+        $driver_id = $group['driver_id'] ?? '';
+        $vehicle   = $group['vehicle'] ?? ''; // label "PATENTE (Tipo)"
+        $patente   = $group['vehicle_patente'] ?? '';
+        if ( $patente === '' && $vehicle !== '' ) {
+            $patente = trim( explode( ' (', $vehicle )[0] ); // derivar de "PATENTE (Tipo)"
+        }
+
         foreach ( ($group['orders'] ?? array()) as $stop_idx => $order ) {
             $order_id = intval($order['id'] ?? 0);
             if ( ! $order_id ) continue;
@@ -1403,6 +1411,10 @@ class Woo_Delivery_Groups {
             $wc_order->update_meta_data( '_wdg_plan_id',       $plan_id );
             $wc_order->update_meta_data( '_wdg_plan_name',     $plan_name );
             $wc_order->update_meta_data( '_wdg_stop_position', intval($stop_idx) + 1 );
+            $wc_order->update_meta_data( '_wdg_driver_id',     $driver_id );
+            $wc_order->update_meta_data( '_wdg_driver_name',   $driver );
+            $wc_order->update_meta_data( '_wdg_vehicle',       $vehicle );
+            $wc_order->update_meta_data( '_wdg_patente',       $patente );
             $wc_order->save();
         }
     }
@@ -1421,6 +1433,10 @@ class Woo_Delivery_Groups {
                 $wc_order->delete_meta_data( '_wdg_plan_id' );
                 $wc_order->delete_meta_data( '_wdg_plan_name' );
                 $wc_order->delete_meta_data( '_wdg_stop_position' );
+                $wc_order->delete_meta_data( '_wdg_driver_id' );
+                $wc_order->delete_meta_data( '_wdg_driver_name' );
+                $wc_order->delete_meta_data( '_wdg_vehicle' );
+                $wc_order->delete_meta_data( '_wdg_patente' );
                 $wc_order->save();
             }
         }
