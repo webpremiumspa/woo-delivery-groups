@@ -105,7 +105,7 @@ jQuery(document).ready(function ($) {
             '<input type="number" id="wdgOrderSearch" placeholder="Buscar pedido #ID">' +
             '<button id="wdgOrderSearchBtn" type="button" title="Buscar y resaltar en el mapa">🔍</button>' +
             '<span id="wdgOrderSearchMsg"></span>';
-        map.controls[google.maps.ControlPosition.TOP_RIGHT].push(searchBox);
+        map.controls[google.maps.ControlPosition.TOP_CENTER].push(searchBox);
         searchBox.querySelector('#wdgOrderSearchBtn').addEventListener('click', wdgSearchOrderOnMap);
         searchBox.querySelector('#wdgOrderSearch').addEventListener('keydown', function(ev){
             if (ev.key === 'Enter') { ev.preventDefault(); wdgSearchOrderOnMap(); }

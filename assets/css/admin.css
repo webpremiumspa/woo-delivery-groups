@@ -697,7 +697,7 @@
 /* ── Buscador de pedido sobre el mapa ──────── */
 .wdg-map-search {
     display: flex; align-items: center; gap: 4px;
-    margin: 10px 10px 0 0; background: #fff;
+    margin: 10px 0 0; background: #fff;
     border: 1px solid #c3c4c7; border-radius: 4px;
     padding: 4px 6px; box-shadow: 0 1px 3px rgba(0,0,0,.18);
 }
