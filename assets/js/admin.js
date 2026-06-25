@@ -768,10 +768,14 @@ var groups   = res.data.groups;
                              escHtml(ord.address)+', '+escHtml(ord.city)+'<br>'+
                              '<span style="color:#555">'+escHtml(ord.customer)+'</span><br>'+
                              '<span style="color:#888;font-family:monospace">'+escHtml(ord.phone)+'</span><br>'+
-                             '<div style="margin-top:8px;display:flex;align-items:center;justify-content:space-between">'+
+                             '<div style="margin-top:8px;display:flex;align-items:center;justify-content:space-between;gap:6px">'+
                              '<span style="padding:2px 7px;background:'+color+';color:#fff;border-radius:3px;font-size:11px">'+escHtml(g.name)+'</span>'+
+                             '<span style="display:flex;gap:6px">'+
                              '<button onclick="wdgOpenMoveFromMap('+groupIdx+','+orderIdx+')" '+
                              'style="background:#2271b1;color:#fff;border:none;border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer">⇄ Mover</button>'+
+                             '<button onclick="wdgRemoveOrderFromMap('+groupIdx+','+orderIdx+')" '+
+                             'style="background:#dc2626;color:#fff;border:none;border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer">🗑 Quitar</button>'+
+                             '</span>'+
                              '</div>'+
                              '</div>',
                 });
@@ -1685,6 +1689,57 @@ if (g.token) activeTokens[i] = g.token;
         renderGroups(groups, hasDepot);
         renderMap(groups, hasDepot);
         return toInsert.length;
+    }
+
+    // ── Quitar un pedido de su ruta desde el mapa ─────────────────────────────
+    window.wdgRemoveOrderFromMap = function(groupIdx, orderIdx) {
+        var groups = window.wdgGroups;
+        if (!groups || !groups[groupIdx] || !groups[groupIdx].orders[orderIdx]) return;
+        var order = groups[groupIdx].orders[orderIdx];
+
+        if (order.delivered) {
+            alert('⛔ Este pedido ya fue entregado y no se puede quitar de la ruta.');
+            return;
+        }
+        if (!confirm('¿Quitar el pedido #' + order.id + ' de la ruta?\n\nSe limpiarán sus datos de ruta y quedará sin asignar.')) return;
+
+        infoWindows.forEach(function(w){ w.close(); });
+
+        // Plan guardado → quitar en servidor (limpia metas + reoptimiza + refresca token)
+        if (planIsSaved && currentPlanId) {
+            $.post(wdgData.ajaxUrl, {
+                action:   'wdg_remove_order',
+                nonce:    wdgData.nonce,
+                plan_id:  currentPlanId,
+                order_id: order.id,
+            }, function(res) {
+                if (!res.success) { alert('Error: ' + res.data); return; }
+                window.wdgLoadPlan(currentPlanId);
+                setTimeout(function() {
+                    $('#wdgSavePlanStatus').html('<span style="color:#15803d">✅ Pedido #' + order.id + ' quitado de la ruta.</span>');
+                }, 700);
+            }).fail(function() { alert('Error de conexión'); });
+            return;
+        }
+
+        // Plan sin guardar → quitar en cliente
+        wdgClientRemove(groupIdx, orderIdx);
+        $('#wdgSavePlanStatus').html('<span style="color:#15803d">✅ Pedido #' + order.id + ' quitado. Guarda el plan para fijar los cambios.</span>');
+    };
+
+    function wdgClientRemove(groupIdx, orderIdx) {
+        var groups = window.wdgGroups;
+        if (!groups[groupIdx] || !groups[groupIdx].orders[orderIdx]) return;
+        groups[groupIdx].orders.splice(orderIdx, 1);
+        groups[groupIdx].count = groups[groupIdx].orders.length;
+        groups.forEach(function(g){ g.orders.forEach(function(o,i){ o._tsp_idx = i; }); });
+        wdgRecalcAllKm(groups);
+
+        window.wdgGroups = groups; currentGroups = groups;
+        var hasDepot = window.wdgHasDepot && wdgData.depot && wdgData.depot.lat;
+        renderStats(groups.reduce(function(s,g){ return s + g.count; }, 0), 0, groups, (currentConfig.max_per_group || 35), hasDepot);
+        renderGroups(groups, hasDepot);
+        renderMap(groups, hasDepot);
     }
 
     // ══ REASIGNACIÓN MASIVA DE PEDIDOS ENTRE RUTAS ════════════════════════════

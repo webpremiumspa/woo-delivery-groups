@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WooCommerce Delivery Groups
  * Description: Agrupa pedidos por cercanía geográfica (K-Means++) y optimiza rutas de reparto (TSP). Considera bodega como punto de inicio y retorno.
- * Version:     2.17.0
+ * Version:     2.18.0
  * Author:      Webpremium Chile
  * Text Domain: woo-delivery-groups
  */
@@ -12,7 +12,7 @@ defined( 'ABSPATH' ) || exit;
 class Woo_Delivery_Groups {
 
     const SLUG        = 'woo-delivery-groups';
-    const VERSION     = '2.17.0';
+    const VERSION     = '2.18.0';
     const OPT_API_KEY = 'wga_google_maps_api_key';
     const OPT_DEPOT       = 'wdg_depot';       // array: address, lat, lng
     const OPT_SEND_EMAIL  = 'wdg_send_photo_email'; // 1 = enviar, 0 = no enviar
@@ -56,6 +56,7 @@ class Woo_Delivery_Groups {
         add_action( 'wp_ajax_wdg_new_orders',   array( $this, 'ajax_new_orders' ) );
         add_action( 'wp_ajax_wdg_append_orders',array( $this, 'ajax_append_orders' ) );
         add_action( 'wp_ajax_wdg_reassign_orders', array( $this, 'ajax_reassign_orders' ) );
+        add_action( 'wp_ajax_wdg_remove_order',     array( $this, 'ajax_remove_order' ) );
         add_action( 'wp_ajax_wdg_get_log',          array( $this, 'ajax_get_log' ) );
         add_action( 'wp_ajax_wdg_query_events',     array( $this, 'ajax_query_events' ) );
         add_action( 'wp_ajax_wdg_save_driver',      array( $this, 'ajax_save_driver' ) );
@@ -1419,6 +1420,19 @@ class Woo_Delivery_Groups {
         }
     }
 
+    // Borra los metas de ruta de un pedido (queda sin asignar).
+    private function clear_order_route_metas( $order_id ) {
+        $wc_order = wc_get_order( $order_id );
+        if ( ! $wc_order ) return;
+        foreach ( array(
+            '_wdg_route', '_wdg_plan_id', '_wdg_plan_name', '_wdg_stop_position',
+            '_wdg_driver_id', '_wdg_driver_name', '_wdg_vehicle', '_wdg_patente',
+        ) as $meta_key ) {
+            $wc_order->delete_meta_data( $meta_key );
+        }
+        $wc_order->save();
+    }
+
     // Borra los metas de ruta de los pedidos de un plan (al eliminar la
     // planificación). Solo limpia el pedido si sigue perteneciendo a este plan.
     private function clear_plan_order_metas( $plan, $plan_id ) {
@@ -1429,15 +1443,7 @@ class Woo_Delivery_Groups {
                 $wc_order = wc_get_order( $order_id );
                 if ( ! $wc_order ) continue;
                 if ( (string) $wc_order->get_meta('_wdg_plan_id') !== (string) $plan_id ) continue;
-                $wc_order->delete_meta_data( '_wdg_route' );
-                $wc_order->delete_meta_data( '_wdg_plan_id' );
-                $wc_order->delete_meta_data( '_wdg_plan_name' );
-                $wc_order->delete_meta_data( '_wdg_stop_position' );
-                $wc_order->delete_meta_data( '_wdg_driver_id' );
-                $wc_order->delete_meta_data( '_wdg_driver_name' );
-                $wc_order->delete_meta_data( '_wdg_vehicle' );
-                $wc_order->delete_meta_data( '_wdg_patente' );
-                $wc_order->save();
+                $this->clear_order_route_metas( $order_id );
             }
         }
     }
@@ -2751,6 +2757,72 @@ class Woo_Delivery_Groups {
             'moved'   => count($moves),
             'blocked' => $blocked,
             'groups'  => $plan['groups'],
+        ) );
+    }
+
+    // ── Quitar un pedido de su ruta (lo deja sin asignar y limpia sus metas) ───
+    public function ajax_remove_order() {
+        check_ajax_referer( 'wdg_nonce', 'nonce' );
+
+        $plan_id  = sanitize_text_field( $_POST['plan_id'] ?? '' );
+        $order_id = intval( $_POST['order_id'] ?? 0 );
+
+        if ( empty($plan_id) ) { wp_send_json_error('ID de plan requerido'); }
+        if ( ! $order_id )     { wp_send_json_error('ID de pedido requerido'); }
+
+        $plan = get_option( $this->get_plan_key($plan_id) );
+        if ( empty($plan) ) { wp_send_json_error('Plan no encontrado'); }
+
+        $depot = $plan['depot'] ?? $this->get_depot();
+
+        // Localizar la ruta (grupo) del pedido y su token
+        $home_gi = null;
+        $token   = '';
+        foreach ( $plan['groups'] as $gi => $g ) {
+            foreach ( ($g['orders'] ?? array()) as $o ) {
+                if ( intval($o['id']) === $order_id ) {
+                    $home_gi = $gi;
+                    $token   = $plan['tokens'][$gi] ?? $plan['tokens'][$g['name']] ?? '';
+                    break 2;
+                }
+            }
+        }
+        if ( $home_gi === null ) { wp_send_json_error('El pedido no está en este plan'); }
+
+        // Estado de entrega de la ruta de origen → bloquear si ya fue entregado
+        $state = $this->group_delivery_state( $plan['groups'][$home_gi]['orders'] ?? array(), $token );
+        if ( isset($state[$order_id]) && $state[$order_id] === true ) {
+            wp_send_json_error('El pedido ya fue entregado y no se puede quitar de la ruta');
+        }
+
+        // Estado del resto de la ruta (los entregados quedan fijos al reoptimizar)
+        $id_state = $state;
+        unset( $id_state[$order_id] );
+
+        // Quitar el pedido y reconstruir la ruta (reoptimiza + refresca token)
+        $kept = array();
+        foreach ( $plan['groups'][$home_gi]['orders'] as $o ) {
+            if ( intval($o['id']) === $order_id ) continue;
+            $kept[] = $o;
+        }
+        $group = &$plan['groups'][$home_gi];
+        $this->rebuild_group( $group, $token, $kept, $id_state, $depot );
+        unset( $group );
+
+        update_option( $this->get_plan_key($plan_id), $plan, false );
+
+        // Limpiar los metas de ruta del pedido (queda sin asignar)
+        $this->clear_order_route_metas( $order_id );
+
+        $this->log('OK', 'remove_order: pedido quitado de la ruta', array(
+            'plan_id'  => $plan_id,
+            'order_id' => $order_id,
+            'group'    => $home_gi,
+        ));
+
+        wp_send_json_success( array(
+            'order_id' => $order_id,
+            'groups'   => $plan['groups'],
         ) );
     }
 
