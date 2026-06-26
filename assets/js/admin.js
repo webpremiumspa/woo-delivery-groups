@@ -1697,11 +1697,8 @@ if (g.token) activeTokens[i] = g.token;
         if (!groups || !groups[groupIdx] || !groups[groupIdx].orders[orderIdx]) return;
         var order = groups[groupIdx].orders[orderIdx];
 
-        if (order.delivered) {
-            alert('⛔ Este pedido ya fue entregado y no se puede quitar de la ruta.');
-            return;
-        }
-        if (!confirm('¿Quitar el pedido #' + order.id + ' de la ruta?\n\nSe limpiarán sus datos de ruta y quedará sin asignar.')) return;
+        var warn = order.delivered ? '\n\n⚠️ Este pedido figura como ENTREGADO; se quitará de la ruta igualmente.' : '';
+        if (!confirm('¿Quitar el pedido #' + order.id + ' de la ruta?\n\nSe limpiarán sus datos de ruta y quedará sin asignar.' + warn)) return;
 
         infoWindows.forEach(function(w){ w.close(); });
 

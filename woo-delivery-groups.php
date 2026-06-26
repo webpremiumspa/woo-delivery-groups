@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WooCommerce Delivery Groups
  * Description: Agrupa pedidos por cercanía geográfica (K-Means++) y optimiza rutas de reparto (TSP). Considera bodega como punto de inicio y retorno.
- * Version:     2.18.0
+ * Version:     2.18.1
  * Author:      Webpremium Chile
  * Text Domain: woo-delivery-groups
  */
@@ -12,7 +12,7 @@ defined( 'ABSPATH' ) || exit;
 class Woo_Delivery_Groups {
 
     const SLUG        = 'woo-delivery-groups';
-    const VERSION     = '2.18.0';
+    const VERSION     = '2.18.1';
     const OPT_API_KEY = 'wga_google_maps_api_key';
     const OPT_DEPOT       = 'wdg_depot';       // array: address, lat, lng
     const OPT_SEND_EMAIL  = 'wdg_send_photo_email'; // 1 = enviar, 0 = no enviar
@@ -2789,13 +2789,9 @@ class Woo_Delivery_Groups {
         }
         if ( $home_gi === null ) { wp_send_json_error('El pedido no está en este plan'); }
 
-        // Estado de entrega de la ruta de origen → bloquear si ya fue entregado
-        $state = $this->group_delivery_state( $plan['groups'][$home_gi]['orders'] ?? array(), $token );
-        if ( isset($state[$order_id]) && $state[$order_id] === true ) {
-            wp_send_json_error('El pedido ya fue entregado y no se puede quitar de la ruta');
-        }
-
-        // Estado del resto de la ruta (los entregados quedan fijos al reoptimizar)
+        // Estado de entrega de la ruta de origen (los entregados que se quedan
+        // permanecen fijos al reoptimizar). Se permite quitar incluso entregados.
+        $state    = $this->group_delivery_state( $plan['groups'][$home_gi]['orders'] ?? array(), $token );
         $id_state = $state;
         unset( $id_state[$order_id] );
 
