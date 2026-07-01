@@ -1499,6 +1499,43 @@ if (g.token) activeTokens[i] = g.token;
         });
     };
 
+    // Buscar y añadir un pedido único por ID (bypassa el filtro de estado)
+    window.wdgFindOrderById = function() {
+        if (!currentPlanId) { alert('Primero carga o guarda una planificación.'); return; }
+        var id = parseInt($('#wdgFindOrderId').val());
+        if (!id) { alert('Ingresa un número de pedido.'); return; }
+
+        if (wdgNewOrders.some(function(o){ return o.id == id; })) {
+            $('#wdgAddOrdersStatus').html('<span style="color:#b45309">El pedido #' + id + ' ya está en la lista.</span>');
+            return;
+        }
+
+        $('#btnFindOrder').prop('disabled', true).text('Buscando…');
+        $.post(wdgData.ajaxUrl, {
+            action:   'wdg_find_order',
+            nonce:    wdgData.nonce,
+            plan_id:  currentPlanId,
+            order_id: id,
+        }, function(res) {
+            $('#btnFindOrder').prop('disabled', false).text('➕ Añadir por ID');
+            if (!res.success) {
+                $('#wdgAddOrdersStatus').html('<span style="color:#b91c1c">❌ ' + escHtml(res.data) + '</span>');
+                return;
+            }
+            var o = res.data.order;
+            o.group_idx = wdgNearestGroup(o);
+            o._include  = true;
+            wdgNewOrders.push(o);
+            $('#wdgFindOrderId').val('');
+            $('#wdgAddOrdersStatus').html('<span style="color:#0369a1">Pedido #' + o.id + ' agregado a la lista. Revisa la asignación y confirma.</span>');
+            wdgRenderNewOrders();
+            $('#wdgNewOrdersPanel').show();
+        }).fail(function() {
+            $('#btnFindOrder').prop('disabled', false).text('➕ Añadir por ID');
+            $('#wdgAddOrdersStatus').html('<span style="color:#b91c1c">❌ Error de conexión</span>');
+        });
+    };
+
     function wdgRenderNewOrders() {
         var allChecked = wdgNewOrders.every(function(o){ return o._include !== false; });
         var html = '<table class="wdg-new-orders-table"><thead><tr>' +

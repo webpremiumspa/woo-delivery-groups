@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WooCommerce Delivery Groups
  * Description: Agrupa pedidos por cercanía geográfica (K-Means++) y optimiza rutas de reparto (TSP). Considera bodega como punto de inicio y retorno.
- * Version:     2.20.0
+ * Version:     2.21.0
  * Author:      Webpremium Chile
  * Text Domain: woo-delivery-groups
  */
@@ -12,7 +12,7 @@ defined( 'ABSPATH' ) || exit;
 class Woo_Delivery_Groups {
 
     const SLUG        = 'woo-delivery-groups';
-    const VERSION     = '2.20.0';
+    const VERSION     = '2.21.0';
     const OPT_API_KEY = 'wga_google_maps_api_key';
     const OPT_DEPOT       = 'wdg_depot';       // array: address, lat, lng
     const OPT_SEND_EMAIL  = 'wdg_send_photo_email'; // 1 = enviar, 0 = no enviar
@@ -54,6 +54,7 @@ class Woo_Delivery_Groups {
         add_action( 'wp_ajax_wdg_load_plan',    array( $this, 'ajax_load_plan' ) );
         add_action( 'wp_ajax_wdg_delete_plan',  array( $this, 'ajax_delete_plan' ) );
         add_action( 'wp_ajax_wdg_new_orders',   array( $this, 'ajax_new_orders' ) );
+        add_action( 'wp_ajax_wdg_find_order',   array( $this, 'ajax_find_order' ) );
         add_action( 'wp_ajax_wdg_append_orders',array( $this, 'ajax_append_orders' ) );
         add_action( 'wp_ajax_wdg_reassign_orders', array( $this, 'ajax_reassign_orders' ) );
         add_action( 'wp_ajax_wdg_remove_order',     array( $this, 'ajax_remove_order' ) );
@@ -268,6 +269,10 @@ class Woo_Delivery_Groups {
                             </select>
                         </div>
                         <button id="btnDetectNew" class="button button-primary" onclick="wdgDetectNewOrders()">🔍 Buscar pedidos nuevos</button>
+                        <div style="margin-top:10px;display:flex;gap:6px;align-items:center">
+                            <input type="number" id="wdgFindOrderId" placeholder="N° de pedido" style="flex:1;min-width:0">
+                            <button id="btnFindOrder" class="button" onclick="wdgFindOrderById()">➕ Añadir por ID</button>
+                        </div>
                         <div id="wdgAddOrdersStatus" style="font-size:12px;margin-top:8px"></div>
                         <div id="wdgNewOrdersPanel" style="display:none;margin-top:12px">
                             <div id="wdgNewOrdersList"></div>
@@ -623,34 +628,41 @@ class Woo_Delivery_Groups {
                 continue;
             }
 
-            $result[] = array(
-                'id'             => $order->get_id(),
-                'lat'            => $lat,
-                'lng'            => $lng,
-                'address'        => $order->get_billing_address_1() ?: $order->get_shipping_address_1(),
-                'customer'       => trim( $order->get_billing_first_name() . ' ' . $order->get_billing_last_name() ),
-                'phone'          => $order->get_billing_phone(),
-                'email'          => $order->get_billing_email(),
-                'note'           => $order->get_customer_note(),
-                'address_2'      => $order->get_billing_address_2() ?: $order->get_shipping_address_2(),
-                'city'           => $order->get_billing_city() ?: $order->get_shipping_city(),
-                'total'          => $order->get_formatted_order_total(),
-                'delivered'      => $order->get_meta('_wdg_delivered') === '1',
-                'delivered_date' => $order->get_meta('_wdg_delivered_date') ?: '',
-                'delivered_by'   => $order->get_meta('_wdg_delivered_by') ?: '',
-                'items'          => array_map( function($item) {
-                    $product  = $item->get_product();
-                    $thumb    = $product ? get_the_post_thumbnail_url($product->get_id(), 'thumbnail') : '';
-                    return array(
-                        'name'  => $item->get_name(),
-                        'qty'   => $item->get_quantity(),
-                        'thumb' => $thumb ?: '',
-                    );
-                }, array_values($order->get_items()) ),
-            );
+            $result[] = $this->order_to_payload( $order, $lat, $lng );
         }
 
         return array('orders' => $result, 'skipped' => $skipped);
+    }
+
+    // Estructura estándar de un pedido para el planificador (mapa/rutas).
+    private function order_to_payload( $order, $lat = null, $lng = null ) {
+        if ( $lat === null ) $lat = floatval( $order->get_meta('_billing_address_lat') );
+        if ( $lng === null ) $lng = floatval( $order->get_meta('_billing_address_lng') );
+        return array(
+            'id'             => $order->get_id(),
+            'lat'            => $lat,
+            'lng'            => $lng,
+            'address'        => $order->get_billing_address_1() ?: $order->get_shipping_address_1(),
+            'customer'       => trim( $order->get_billing_first_name() . ' ' . $order->get_billing_last_name() ),
+            'phone'          => $order->get_billing_phone(),
+            'email'          => $order->get_billing_email(),
+            'note'           => $order->get_customer_note(),
+            'address_2'      => $order->get_billing_address_2() ?: $order->get_shipping_address_2(),
+            'city'           => $order->get_billing_city() ?: $order->get_shipping_city(),
+            'total'          => $order->get_formatted_order_total(),
+            'delivered'      => $order->get_meta('_wdg_delivered') === '1',
+            'delivered_date' => $order->get_meta('_wdg_delivered_date') ?: '',
+            'delivered_by'   => $order->get_meta('_wdg_delivered_by') ?: '',
+            'items'          => array_map( function($item) {
+                $product  = $item->get_product();
+                $thumb    = $product ? get_the_post_thumbnail_url($product->get_id(), 'thumbnail') : '';
+                return array(
+                    'name'  => $item->get_name(),
+                    'qty'   => $item->get_quantity(),
+                    'thumb' => $thumb ?: '',
+                );
+            }, array_values($order->get_items()) ),
+        );
     }
 
     // ── AJAX: clustering + TSP ────────────────────────────────────────────────
@@ -2496,6 +2508,44 @@ class Woo_Delivery_Groups {
             'count'   => count($new_orders),
             'skipped' => $data['skipped'],
         ) );
+    }
+
+    // ── Buscar un pedido único por ID para añadirlo a un plan ──────────────────
+    public function ajax_find_order() {
+        check_ajax_referer( 'wdg_nonce', 'nonce' );
+
+        $plan_id  = sanitize_text_field( $_POST['plan_id'] ?? '' );
+        $order_id = intval( $_POST['order_id'] ?? 0 );
+
+        if ( empty($plan_id) ) { wp_send_json_error('ID de plan requerido'); }
+        if ( ! $order_id )     { wp_send_json_error('Ingresa un número de pedido válido'); }
+
+        $plan = get_option( $this->get_plan_key($plan_id) );
+        if ( empty($plan) ) { wp_send_json_error('Plan no encontrado'); }
+
+        // ¿Ya está asignado a alguna ruta del plan?
+        foreach ( ($plan['groups'] ?? array()) as $g ) {
+            foreach ( ($g['orders'] ?? array()) as $o ) {
+                if ( intval($o['id']) === $order_id ) {
+                    wp_send_json_error('El pedido #' . $order_id . ' ya está asignado a la ruta ' . ($g['name'] ?? ''));
+                }
+            }
+        }
+
+        $order = wc_get_order( $order_id );
+        if ( ! $order ) { wp_send_json_error('No existe el pedido #' . $order_id); }
+
+        $lat = floatval( $order->get_meta('_billing_address_lat') );
+        $lng = floatval( $order->get_meta('_billing_address_lng') );
+        if ( empty($lat) || empty($lng) ) {
+            wp_send_json_error('El pedido #' . $order_id . ' no tiene coordenadas. Geocodifícalo primero.');
+        }
+        if ( $lat < self::LAT_MIN || $lat > self::LAT_MAX ||
+             $lng < self::LNG_MIN || $lng > self::LNG_MAX ) {
+            wp_send_json_error('El pedido #' . $order_id . ' está fuera del área de Santiago.');
+        }
+
+        wp_send_json_success( array( 'order' => $this->order_to_payload( $order, $lat, $lng ) ) );
     }
 
     // ── Añadir pedidos nuevos a un plan y reoptimizar las rutas afectadas ──────
