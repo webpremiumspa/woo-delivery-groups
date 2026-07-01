@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WooCommerce Delivery Groups
  * Description: Agrupa pedidos por cercanía geográfica (K-Means++) y optimiza rutas de reparto (TSP). Considera bodega como punto de inicio y retorno.
- * Version:     2.18.1
+ * Version:     2.19.0
  * Author:      Webpremium Chile
  * Text Domain: woo-delivery-groups
  */
@@ -12,7 +12,7 @@ defined( 'ABSPATH' ) || exit;
 class Woo_Delivery_Groups {
 
     const SLUG        = 'woo-delivery-groups';
-    const VERSION     = '2.18.1';
+    const VERSION     = '2.19.0';
     const OPT_API_KEY = 'wga_google_maps_api_key';
     const OPT_DEPOT       = 'wdg_depot';       // array: address, lat, lng
     const OPT_SEND_EMAIL  = 'wdg_send_photo_email'; // 1 = enviar, 0 = no enviar
@@ -57,6 +57,7 @@ class Woo_Delivery_Groups {
         add_action( 'wp_ajax_wdg_append_orders',array( $this, 'ajax_append_orders' ) );
         add_action( 'wp_ajax_wdg_reassign_orders', array( $this, 'ajax_reassign_orders' ) );
         add_action( 'wp_ajax_wdg_remove_order',     array( $this, 'ajax_remove_order' ) );
+        add_action( 'wp_ajax_wdg_remove_orders',    array( $this, 'ajax_remove_orders' ) );
         add_action( 'wp_ajax_wdg_get_log',          array( $this, 'ajax_get_log' ) );
         add_action( 'wp_ajax_wdg_query_events',     array( $this, 'ajax_query_events' ) );
         add_action( 'wp_ajax_wdg_save_driver',      array( $this, 'ajax_save_driver' ) );
@@ -517,6 +518,7 @@ class Woo_Delivery_Groups {
                 <select id="wdg-reassign-target"></select>
                 <button class="button button-primary" onclick="wdgDoReassign('single')">Mover a esta ruta</button>
                 <button class="button" onclick="wdgDoReassign('auto')" title="Asignar cada uno a la ruta más cercana">📍 Auto: más cercana</button>
+                <button class="button" onclick="wdgDoRemoveSelected()" title="Quitar los seleccionados de su ruta" style="color:#b91c1c">🗑 Quitar de ruta</button>
                 <button class="button" onclick="wdgToggleReassign(false)">Salir</button>
             </div>
 
@@ -2819,6 +2821,69 @@ class Woo_Delivery_Groups {
         wp_send_json_success( array(
             'order_id' => $order_id,
             'groups'   => $plan['groups'],
+        ) );
+    }
+
+    // ── Quitar varios pedidos de sus rutas (selección por área) ───────────────
+    public function ajax_remove_orders() {
+        check_ajax_referer( 'wdg_nonce', 'nonce' );
+
+        $plan_id = sanitize_text_field( $_POST['plan_id'] ?? '' );
+        $ids_raw = json_decode( stripslashes( $_POST['order_ids'] ?? '[]' ), true );
+
+        if ( empty($plan_id) )                        { wp_send_json_error('ID de plan requerido'); }
+        if ( empty($ids_raw) || ! is_array($ids_raw) ) { wp_send_json_error('Sin pedidos para quitar'); }
+
+        $plan = get_option( $this->get_plan_key($plan_id) );
+        if ( empty($plan) ) { wp_send_json_error('Plan no encontrado'); }
+
+        $depot  = $plan['depot'] ?? $this->get_depot();
+
+        $remove = array();
+        foreach ( $ids_raw as $id ) { $id = intval($id); if ( $id ) $remove[$id] = true; }
+
+        // Tokens por ruta y rutas afectadas (las que contienen algún pedido a quitar)
+        $tokens   = array();
+        $affected = array();
+        foreach ( $plan['groups'] as $gi => $g ) {
+            $tokens[$gi] = $plan['tokens'][$gi] ?? $plan['tokens'][$g['name']] ?? '';
+            foreach ( ($g['orders'] ?? array()) as $o ) {
+                if ( isset($remove[ intval($o['id']) ]) ) { $affected[$gi] = true; break; }
+            }
+        }
+        if ( empty($affected) ) { wp_send_json_error('Ningún pedido seleccionado está en este plan'); }
+
+        // Quitar de cada ruta afectada, limpiar metas y reoptimizar (refresca token)
+        $removed = 0;
+        foreach ( array_keys($affected) as $gi ) {
+            $token = $tokens[$gi];
+            $state = $this->group_delivery_state( $plan['groups'][$gi]['orders'] ?? array(), $token );
+            $kept  = array();
+            foreach ( $plan['groups'][$gi]['orders'] as $o ) {
+                $oid = intval($o['id']);
+                if ( isset($remove[$oid]) ) {
+                    unset( $state[$oid] );
+                    $this->clear_order_route_metas( $oid );
+                    $removed++;
+                    continue;
+                }
+                $kept[] = $o;
+            }
+            $group = &$plan['groups'][$gi];
+            $this->rebuild_group( $group, $token, $kept, $state, $depot );
+            unset( $group );
+        }
+
+        update_option( $this->get_plan_key($plan_id), $plan, false );
+
+        $this->log('OK', 'remove_orders: pedidos quitados de sus rutas', array(
+            'plan_id' => $plan_id,
+            'removed' => $removed,
+        ));
+
+        wp_send_json_success( array(
+            'removed' => $removed,
+            'groups'  => $plan['groups'],
         ) );
     }
 

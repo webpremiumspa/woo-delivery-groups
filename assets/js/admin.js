@@ -1739,6 +1739,75 @@ if (g.token) activeTokens[i] = g.token;
         renderMap(groups, hasDepot);
     }
 
+    // ── Quitar varios pedidos seleccionados (por área) de sus rutas ───────────
+    window.wdgDoRemoveSelected = function() {
+        var ids = wdgSelIds();
+        if (!ids.length) { alert('Selecciona al menos un pedido.'); return; }
+
+        var anyDelivered = ids.some(function(id){ var o = wdgOrderById(id); return o && o.delivered; });
+        var warn = anyDelivered ? '\n\n⚠️ Algunos figuran como ENTREGADOS; se quitarán igualmente.' : '';
+        if (!confirm('¿Quitar ' + ids.length + ' pedido(s) de su ruta?\n\nSe limpiarán sus datos de ruta y quedarán sin asignar.' + warn)) return;
+
+        // Plan guardado → quitar en servidor (limpia metas + reoptimiza + refresca tokens)
+        if (planIsSaved && currentPlanId) {
+            $('#wdg-reassign-bar button').prop('disabled', true);
+            $.post(wdgData.ajaxUrl, {
+                action:    'wdg_remove_orders',
+                nonce:     wdgData.nonce,
+                plan_id:   currentPlanId,
+                order_ids: JSON.stringify(ids),
+            }, function(res) {
+                $('#wdg-reassign-bar button').prop('disabled', false);
+                if (!res.success) { alert('Error: ' + res.data); return; }
+                wdgReassignMode = false;
+                wdgSel = {};
+                wdgSetAreaMode(false);
+                $('#wdg-reassign-bar').hide();
+                window.wdgLoadPlan(currentPlanId);
+                setTimeout(function() {
+                    $('#wdgSavePlanStatus').html('<span style="color:#15803d">✅ ' + res.data.removed + ' pedido(s) quitado(s) de la ruta.</span>');
+                }, 700);
+            }).fail(function() {
+                $('#wdg-reassign-bar button').prop('disabled', false);
+                alert('Error de conexión');
+            });
+            return;
+        }
+
+        // Plan sin guardar → quitar en cliente
+        wdgSetAreaMode(false);
+        var n = wdgClientRemoveMany(ids);
+        wdgSel = {};
+        $('#wdg-reassign-bar').hide();
+        $('#wdgSavePlanStatus').html('<span style="color:#15803d">✅ ' + n + ' pedido(s) quitado(s). Guarda el plan para fijar los cambios.</span>');
+    };
+
+    function wdgClientRemoveMany(ids) {
+        var groups = window.wdgGroups;
+        var idset  = {};
+        ids.forEach(function(id){ idset[id] = true; });
+
+        var removed = 0;
+        groups.forEach(function(g){
+            var kept = [];
+            g.orders.forEach(function(o){
+                if (idset[o.id]) { removed++; return; }
+                kept.push(o);
+            });
+            g.orders = kept;
+            g.count  = kept.length;
+        });
+        groups.forEach(function(g){ g.orders.forEach(function(o,i){ o._tsp_idx = i; }); });
+        wdgRecalcAllKm(groups);
+
+        window.wdgGroups = groups; currentGroups = groups;
+        var hasDepot = window.wdgHasDepot && wdgData.depot && wdgData.depot.lat;
+        renderStats(groups.reduce(function(s,g){ return s + g.count; }, 0), 0, groups, (currentConfig.max_per_group || 35), hasDepot);
+        renderGroups(groups, hasDepot);
+        renderMap(groups, hasDepot);
+        return removed;
+    }
+
     // ══ REASIGNACIÓN MASIVA DE PEDIDOS ENTRE RUTAS ════════════════════════════
     window.wdgToggleReassign = function(on) {
         wdgReassignMode = !!on;
