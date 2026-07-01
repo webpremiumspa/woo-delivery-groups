@@ -1384,6 +1384,10 @@ if (g.token) activeTokens[i] = g.token;
             // Restaurar config en el form
             if (plan.config) {
                 $('#wdgStatus').val(plan.config.status || 'any');
+                // Buscador de pedidos nuevos: por defecto el estado del plan
+                if (plan.config.status && plan.config.status !== 'any') {
+                    $('#wdgNewStatus').val(plan.config.status);
+                }
                 $('#wdgGroups').val(plan.config.k || 3);
                 $('#wdgMaxPerGroup').val(plan.config.max_per_group || 35);
                 $('#wdgNames').val(plan.config.names || '');
@@ -1467,6 +1471,7 @@ if (g.token) activeTokens[i] = g.token;
             action:  'wdg_new_orders',
             nonce:   wdgData.nonce,
             plan_id: currentPlanId,
+            status:  $('#wdgNewStatus').val(),
         }, function(res) {
             $('#btnDetectNew').prop('disabled', false).text('🔍 Buscar pedidos nuevos');
             if (!res.success) {
@@ -1478,9 +1483,10 @@ if (g.token) activeTokens[i] = g.token;
                 $('#wdgAddOrdersStatus').html('<span style="color:#15803d">✅ No hay pedidos nuevos sin asignar.</span>');
                 return;
             }
-            // Asignación automática a la ruta más cercana
+            // Asignación automática a la ruta más cercana; incluidos por defecto
             wdgNewOrders = orders.map(function(o) {
                 o.group_idx = wdgNearestGroup(o);
+                o._include  = true;
                 return o;
             });
             $('#wdgAddOrdersStatus').html('<span style="color:#0369a1"><strong>' + orders.length +
@@ -1494,7 +1500,9 @@ if (g.token) activeTokens[i] = g.token;
     };
 
     function wdgRenderNewOrders() {
+        var allChecked = wdgNewOrders.every(function(o){ return o._include !== false; });
         var html = '<table class="wdg-new-orders-table"><thead><tr>' +
+                   '<th><input type="checkbox" id="wdgNewCbAll"' + (allChecked ? ' checked' : '') + ' title="Seleccionar todos"></th>' +
                    '<th>Pedido</th><th>Dirección</th><th>Ruta asignada</th></tr></thead><tbody>';
         wdgNewOrders.forEach(function(o, i) {
             var opts = '';
@@ -1502,8 +1510,10 @@ if (g.token) activeTokens[i] = g.token;
                 opts += '<option value="' + gi + '"' + (gi === o.group_idx ? ' selected' : '') + '>' +
                         escHtml(g.name) + ' (' + (g.count || 0) + ')</option>';
             });
-            var dot = GROUP_COLORS[o.group_idx % GROUP_COLORS.length];
-            html += '<tr>' +
+            var dot     = GROUP_COLORS[o.group_idx % GROUP_COLORS.length];
+            var checked = (o._include !== false) ? ' checked' : '';
+            html += '<tr' + (o._include === false ? ' style="opacity:.5"' : '') + '>' +
+                    '<td style="text-align:center"><input type="checkbox" class="wdg-new-order-cb" data-i="' + i + '"' + checked + '></td>' +
                     '<td><a href="' + wdgData.adminUrl + 'post.php?post=' + o.id + '&action=edit" target="_blank">#' + o.id + '</a></td>' +
                     '<td>' + escHtml(o.address) + (o.city ? ', ' + escHtml(o.city) : '') + '</td>' +
                     '<td><span class="wdg-move-dot" style="background:' + dot + '"></span>' +
@@ -1512,6 +1522,12 @@ if (g.token) activeTokens[i] = g.token;
         });
         html += '</tbody></table>';
         $('#wdgNewOrdersList').html(html);
+        wdgUpdateAppendCount();
+    }
+
+    function wdgUpdateAppendCount() {
+        var n = wdgNewOrders.filter(function(o){ return o._include !== false; }).length;
+        $('#btnConfirmAppend').text('✅ Confirmar y reoptimizar (' + n + ')').prop('disabled', n === 0);
     }
 
     $(document).on('change', '.wdg-new-order-group', function() {
@@ -1520,14 +1536,27 @@ if (g.token) activeTokens[i] = g.token;
         wdgRenderNewOrders(); // refresca el color del punto
     });
 
+    $(document).on('change', '.wdg-new-order-cb', function() {
+        var i = parseInt($(this).data('i'));
+        wdgNewOrders[i]._include = $(this).is(':checked');
+        wdgRenderNewOrders();
+    });
+
+    $(document).on('change', '#wdgNewCbAll', function() {
+        var on = $(this).is(':checked');
+        wdgNewOrders.forEach(function(o){ o._include = on; });
+        wdgRenderNewOrders();
+    });
+
     window.wdgConfirmAppend = function() {
-        if (!wdgNewOrders.length) return;
+        var toAdd = wdgNewOrders.filter(function(o){ return o._include !== false; });
+        if (!toAdd.length) { alert('Selecciona al menos un pedido para añadir.'); return; }
         $('#btnConfirmAppend').prop('disabled', true).text('Reoptimizando…');
         $.post(wdgData.ajaxUrl, {
             action:  'wdg_append_orders',
             nonce:   wdgData.nonce,
             plan_id: currentPlanId,
-            orders:  JSON.stringify(wdgNewOrders),
+            orders:  JSON.stringify(toAdd),
         }, function(res) {
             $('#btnConfirmAppend').prop('disabled', false).text('✅ Confirmar y reoptimizar');
             if (!res.success) {

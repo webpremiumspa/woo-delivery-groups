@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WooCommerce Delivery Groups
  * Description: Agrupa pedidos por cercanía geográfica (K-Means++) y optimiza rutas de reparto (TSP). Considera bodega como punto de inicio y retorno.
- * Version:     2.19.0
+ * Version:     2.20.0
  * Author:      Webpremium Chile
  * Text Domain: woo-delivery-groups
  */
@@ -12,7 +12,7 @@ defined( 'ABSPATH' ) || exit;
 class Woo_Delivery_Groups {
 
     const SLUG        = 'woo-delivery-groups';
-    const VERSION     = '2.19.0';
+    const VERSION     = '2.20.0';
     const OPT_API_KEY = 'wga_google_maps_api_key';
     const OPT_DEPOT       = 'wdg_depot';       // array: address, lat, lng
     const OPT_SEND_EMAIL  = 'wdg_send_photo_email'; // 1 = enviar, 0 = no enviar
@@ -252,8 +252,21 @@ class Woo_Delivery_Groups {
                     <div class="wdg-card" id="wdgAddOrdersCard" style="display:none">
                         <h2>➕ Añadir pedidos nuevos</h2>
                         <p class="wdg-sub" style="margin:0 0 10px">
-                            Detecta pedidos llegados después de guardar y los asigna a la ruta más cercana, reoptimizando el recorrido. El enlace del conductor se mantiene.
+                            Detecta pedidos no asignados del estado elegido y los asigna a la ruta más cercana, reoptimizando el recorrido. El enlace del conductor se mantiene.
                         </p>
+                        <div class="wdg-field" style="margin:0 0 10px">
+                            <label>Estado de pedido a buscar</label>
+                            <select id="wdgNewStatus">
+                                <?php
+                                foreach ( wc_get_order_statuses() as $slug => $label ) :
+                                    $selected = selected( $slug, 'wc-en-ruta', false );
+                                ?>
+                                <option value="<?php echo esc_attr($slug); ?>" <?php echo $selected; ?>>
+                                    <?php echo esc_html($label); ?>
+                                </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
                         <button id="btnDetectNew" class="button button-primary" onclick="wdgDetectNewOrders()">🔍 Buscar pedidos nuevos</button>
                         <div id="wdgAddOrdersStatus" style="font-size:12px;margin-top:8px"></div>
                         <div id="wdgNewOrdersPanel" style="display:none;margin-top:12px">
@@ -2444,8 +2457,8 @@ class Woo_Delivery_Groups {
     }
 
     // ── Detectar pedidos nuevos no asignados a un plan ────────────────────────
-    // Reutiliza los filtros del plan (fecha de inicio + estado) pero extiende la
-    // fecha final hasta hoy, para captar pedidos llegados después de planificar.
+    // Trae todos los pedidos del estado indicado (seleccionable; por defecto el
+    // del plan) que aún no estén asignados a ningún grupo del plan.
     public function ajax_new_orders() {
         check_ajax_referer( 'wdg_nonce', 'nonce' );
 
@@ -2456,7 +2469,9 @@ class Woo_Delivery_Groups {
         if ( empty($plan) ) { wp_send_json_error('Plan no encontrado'); }
 
         $config = $plan['config'] ?? array();
-        $status = $config['status'] ?? 'any';
+        // Estado seleccionado en la UI; si no viene, usar el del plan
+        $status = sanitize_text_field( $_POST['status'] ?? '' );
+        if ( $status === '' ) $status = $config['status'] ?? 'any';
 
         // Sin rango de fechas: todos los pedidos del estado que no estén ya asignados
         $data = $this->fetch_orders( '', '', $status, '0' );
