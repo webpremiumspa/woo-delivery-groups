@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WooCommerce Delivery Groups
  * Description: Agrupa pedidos por cercanía geográfica (K-Means++) y optimiza rutas de reparto (TSP). Considera bodega como punto de inicio y retorno.
- * Version:     2.21.0
+ * Version:     2.22.0
  * Author:      Webpremium Chile
  * Text Domain: woo-delivery-groups
  */
@@ -12,7 +12,7 @@ defined( 'ABSPATH' ) || exit;
 class Woo_Delivery_Groups {
 
     const SLUG        = 'woo-delivery-groups';
-    const VERSION     = '2.21.0';
+    const VERSION     = '2.22.0';
     const OPT_API_KEY = 'wga_google_maps_api_key';
     const OPT_DEPOT       = 'wdg_depot';       // array: address, lat, lng
     const OPT_SEND_EMAIL  = 'wdg_send_photo_email'; // 1 = enviar, 0 = no enviar
@@ -610,17 +610,19 @@ class Woo_Delivery_Groups {
         }
         if ( $status !== 'any' ) $args['status'] = str_replace('wc-', '', $status);
 
-        $orders  = wc_get_orders($args);
-        $result  = array();
-        $skipped = 0;
+        $orders    = wc_get_orders($args);
+        $result    = array();
+        $skipped   = 0;
+        $no_coords = array();   // IDs sin coordenadas geocodificadas
+        $out_bounds= array();   // IDs fuera del área de Santiago
 
         foreach ( $orders as $order ) {
             $lat = floatval( $order->get_meta('_billing_address_lat') );
             $lng = floatval( $order->get_meta('_billing_address_lng') );
 
-            if ( empty($lat) || empty($lng) ) { $skipped++; continue; }
+            if ( empty($lat) || empty($lng) ) { $skipped++; $no_coords[] = $order->get_id(); continue; }
             if ( $lat < self::LAT_MIN || $lat > self::LAT_MAX ||
-                 $lng < self::LNG_MIN || $lng > self::LNG_MAX ) { $skipped++; continue; }
+                 $lng < self::LNG_MIN || $lng > self::LNG_MAX ) { $skipped++; $out_bounds[] = $order->get_id(); continue; }
 
             // Filtrar pedidos ya entregados si se solicitó
             if ( $exclude_delivered === '1' && $order->get_meta('_wdg_delivered') === '1' ) {
@@ -631,7 +633,12 @@ class Woo_Delivery_Groups {
             $result[] = $this->order_to_payload( $order, $lat, $lng );
         }
 
-        return array('orders' => $result, 'skipped' => $skipped);
+        return array(
+            'orders'            => $result,
+            'skipped'           => $skipped,
+            'no_coords_ids'     => $no_coords,
+            'out_of_bounds_ids' => $out_bounds,
+        );
     }
 
     // Estructura estándar de un pedido para el planificador (mapa/rutas).

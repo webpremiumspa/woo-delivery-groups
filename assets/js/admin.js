@@ -282,19 +282,43 @@ window.wdgOrders = res.data.orders;
                 else quotas.push(remainder);
             }
 
-            renderRepartidores(total, skipped, quotas);
+            renderRepartidores(total, skipped, quotas, res.data.no_coords_ids || [], res.data.out_of_bounds_ids || []);
         }).fail(function() {
             $('#btnSearch').prop('disabled', false).text('🔍 Buscar pedidos');
             alert('Error de conexión');
         });
     });
 
-    function renderRepartidores(total, skipped, quotas) {
+    function wdgOrderIdLinks(ids) {
+        return ids.map(function(id){
+            return '<a href="'+wdgData.adminUrl+'post.php?post='+id+'&action=edit" target="_blank">#'+id+'</a>';
+        }).join(', ');
+    }
+
+    function wdgSkippedDetailHtml(noCoords, outBounds) {
+        if (!noCoords.length && !outBounds.length) return '';
+        var h = '<details class="wdg-skipped-detail" style="margin-top:6px;font-size:12px">';
+        h += '<summary style="cursor:pointer;color:#b45309">Ver pedidos excluidos (' + (noCoords.length + outBounds.length) + ')</summary>';
+        if (noCoords.length) {
+            h += '<div style="margin-top:4px"><strong>Sin coordenadas:</strong> ' + wdgOrderIdLinks(noCoords) + '</div>';
+        }
+        if (outBounds.length) {
+            h += '<div style="margin-top:4px"><strong>Fuera de Santiago:</strong> ' + wdgOrderIdLinks(outBounds) + '</div>';
+        }
+        h += '</details>';
+        return h;
+    }
+
+    function renderRepartidores(total, skipped, quotas, noCoordsIds, outBoundsIds) {
+        noCoordsIds  = noCoordsIds  || [];
+        outBoundsIds = outBoundsIds || [];
         var activeDrivers = wdgDrivers.filter(function(d){ return d.activo; });
 
         var html = '<div class="wdg-quota-info">Se encontraron <strong>' + total + ' pedidos</strong>';
         if (skipped) html += ' · <span style="color:#f59e0b">' + skipped + ' sin coordenadas</span>';
-        html += ' → <strong>' + quotas.length + ' repartidores</strong></div>';
+        html += ' → <strong>' + quotas.length + ' repartidores</strong>';
+        html += wdgSkippedDetailHtml(noCoordsIds, outBoundsIds);
+        html += '</div>';
 
         quotas.forEach(function(q, i) {
             // Construir select con repartidores activos
