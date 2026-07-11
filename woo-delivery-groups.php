@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WooCommerce Delivery Groups
  * Description: Agrupa pedidos por cercanía geográfica (K-Means++) y optimiza rutas de reparto (TSP). Considera bodega como punto de inicio y retorno.
- * Version:     2.22.0
+ * Version:     2.22.1
  * Author:      Webpremium Chile
  * Text Domain: woo-delivery-groups
  */
@@ -12,7 +12,7 @@ defined( 'ABSPATH' ) || exit;
 class Woo_Delivery_Groups {
 
     const SLUG        = 'woo-delivery-groups';
-    const VERSION     = '2.22.0';
+    const VERSION     = '2.22.1';
     const OPT_API_KEY = 'wga_google_maps_api_key';
     const OPT_DEPOT       = 'wdg_depot';       // array: address, lat, lng
     const OPT_SEND_EMAIL  = 'wdg_send_photo_email'; // 1 = enviar, 0 = no enviar
@@ -1630,6 +1630,11 @@ class Woo_Delivery_Groups {
             $this->log('INFO', 'Pedido ya estaba completado', array('order_id' => $order_id));
         }
 
+        // Estados excluyentes: al completar se anula cualquier marca de parcial
+        $order->delete_meta_data( '_wdg_partial' );
+        $order->delete_meta_data( '_wdg_partial_date' );
+        $order->delete_meta_data( '_wdg_partial_by' );
+
         $order->update_meta_data( '_wdg_delivered',      '1' );
         $order->update_meta_data( '_wdg_delivered_date', date('Y-m-d') );
         $order->update_meta_data( '_wdg_delivered_by',   $payload['group']['name'] ?? '' );
@@ -1709,6 +1714,11 @@ class Woo_Delivery_Groups {
         );
 
         $partial_note = sanitize_textarea_field( $_POST['note'] ?? '' );
+
+        // Estados excluyentes: al marcar parcial se anula cualquier marca de entregado
+        $order->delete_meta_data( '_wdg_delivered' );
+        $order->delete_meta_data( '_wdg_delivered_date' );
+        $order->delete_meta_data( '_wdg_delivered_by' );
 
         $order->update_meta_data( '_wdg_partial',      '1' );
         $order->update_meta_data( '_wdg_partial_date', date('Y-m-d') );
@@ -3508,6 +3518,7 @@ function navigateNext() {
 
 // ── Marcar completada y avanzar ───────────────────────────────────────────────
 function markNoEntregadoAndNext() {
+    if (done[currentIdx] === true && !confirm('Este pedido está marcado como ✅ Entregado.\n¿Cambiarlo a 🚫 No entregado?')) return;
     document.getElementById('no-entregado-note').value = '';
     document.getElementById('no-entregado-modal').style.display = 'flex';
     setTimeout(function(){ document.getElementById('no-entregado-note').focus(); }, 100);
@@ -3549,6 +3560,7 @@ function confirmNoEntregado() {
 }
 
 function markPartialAndNext() {
+    if (done[currentIdx] === true && !confirm('Este pedido está marcado como ✅ Entregado.\n¿Cambiarlo a ⚠️ Parcial?')) return;
     // Abrir modal para ingresar nota
     document.getElementById('partial-note').value = '';
     document.getElementById('partial-modal').classList.add('open');
@@ -3606,6 +3618,7 @@ var wdgPhotoOrderIdx = null; // índice de la parada actual al abrir el modal de
 var wdgPhotoMode     = 'complete'; // 'complete' o 'partial'
 
 function markDoneAndNext() {
+    if (done[currentIdx] === 'visited' && !confirm('Este pedido está marcado como ⚠️ Parcial.\n¿Cambiarlo a ✅ Entregado?')) return;
     // Abrir modal de foto antes de completar
     wdgPhotoOrderIdx = currentIdx;
     wdgPhotoMode     = 'complete';
@@ -3824,6 +3837,12 @@ function updatePanel() {
     var metaHtml = esc(o.customer || '');
     if (o.address_2) metaHtml += '<div style="font-size:12px;color:#1d4ed8;margin-top:2px">🏠 ' + esc(o.address_2) + '</div>';
     if (o.note)      metaHtml += '<div style="font-size:12px;color:#92400e;background:#fef3c7;border-radius:4px;padding:3px 7px;margin-top:4px">📝 ' + esc(o.note) + '</div>';
+    // Estado actual de la parada (para evitar re-marcados accidentales)
+    if (done[currentIdx] === true) {
+        metaHtml += '<div style="font-size:12px;font-weight:700;color:#15803d;margin-top:4px">✅ Ya marcado como Entregado</div>';
+    } else if (done[currentIdx] === 'visited') {
+        metaHtml += '<div style="font-size:12px;font-weight:700;color:#c2410c;margin-top:4px">⚠️ Ya marcado como Parcial / No entregado</div>';
+    }
     document.getElementById('stop-meta').innerHTML = metaHtml;
     var ph = document.getElementById('stop-phone');
     var pnum = o.phone ? o.phone.replace(/[^0-9+]/g,'') : '';
