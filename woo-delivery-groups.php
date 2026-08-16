@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WooCommerce Delivery Groups
  * Description: Agrupa pedidos por cercanía geográfica (K-Means++) y optimiza rutas de reparto (TSP). Considera bodega como punto de inicio y retorno.
- * Version:     2.22.1
+ * Version:     2.23.0
  * Author:      Webpremium Chile
  * Text Domain: woo-delivery-groups
  */
@@ -12,7 +12,7 @@ defined( 'ABSPATH' ) || exit;
 class Woo_Delivery_Groups {
 
     const SLUG        = 'woo-delivery-groups';
-    const VERSION     = '2.22.1';
+    const VERSION     = '2.23.0';
     const OPT_API_KEY = 'wga_google_maps_api_key';
     const OPT_DEPOT       = 'wdg_depot';       // array: address, lat, lng
     const OPT_SEND_EMAIL  = 'wdg_send_photo_email'; // 1 = enviar, 0 = no enviar
@@ -1568,6 +1568,18 @@ class Woo_Delivery_Groups {
         );
     }
 
+    // Borra los tres estados de entrega del pedido (son mutuamente excluyentes:
+    // entregado / parcial / no entregado). Se llama antes de fijar el nuevo.
+    private function clear_delivery_state_metas( $order ) {
+        foreach ( array(
+            '_wdg_delivered',     '_wdg_delivered_date',     '_wdg_delivered_by',
+            '_wdg_partial',       '_wdg_partial_date',       '_wdg_partial_by',
+            '_wdg_not_delivered', '_wdg_not_delivered_date', '_wdg_not_delivered_by',
+        ) as $meta_key ) {
+            $order->delete_meta_data( $meta_key );
+        }
+    }
+
     // ── AJAX: conductor marca pedido como completado en WooCommerce ───────────
     // nopriv = sin login (el conductor no está autenticado)
 
@@ -1630,11 +1642,8 @@ class Woo_Delivery_Groups {
             $this->log('INFO', 'Pedido ya estaba completado', array('order_id' => $order_id));
         }
 
-        // Estados excluyentes: al completar se anula cualquier marca de parcial
-        $order->delete_meta_data( '_wdg_partial' );
-        $order->delete_meta_data( '_wdg_partial_date' );
-        $order->delete_meta_data( '_wdg_partial_by' );
-
+        // Estados excluyentes: anular parcial / no entregado antes de marcar entregado
+        $this->clear_delivery_state_metas( $order );
         $order->update_meta_data( '_wdg_delivered',      '1' );
         $order->update_meta_data( '_wdg_delivered_date', date('Y-m-d') );
         $order->update_meta_data( '_wdg_delivered_by',   $payload['group']['name'] ?? '' );
@@ -1698,6 +1707,9 @@ class Woo_Delivery_Groups {
 
         $status_before = $order->get_status();
 
+        // "No entregado" reutiliza este flujo, pero es un estado propio
+        $kind = ( ($_POST['kind'] ?? '') === 'not_delivered' ) ? 'not_delivered' : 'partial';
+
         // Estado YITH personalizado para entrega parcial/pendiente
         $target_status = 'en-ruta-pendiente';
 
@@ -1715,26 +1727,23 @@ class Woo_Delivery_Groups {
 
         $partial_note = sanitize_textarea_field( $_POST['note'] ?? '' );
 
-        // Estados excluyentes: al marcar parcial se anula cualquier marca de entregado
-        $order->delete_meta_data( '_wdg_delivered' );
-        $order->delete_meta_data( '_wdg_delivered_date' );
-        $order->delete_meta_data( '_wdg_delivered_by' );
+        // Estados excluyentes: fijar solo parcial o no entregado
+        $this->clear_delivery_state_metas( $order );
+        $meta_key = ( $kind === 'not_delivered' ) ? '_wdg_not_delivered' : '_wdg_partial';
+        $order->update_meta_data( $meta_key,           '1' );
+        $order->update_meta_data( $meta_key . '_date', date('Y-m-d') );
+        $order->update_meta_data( $meta_key . '_by',   $payload['group']['name'] ?? '' );
 
-        $order->update_meta_data( '_wdg_partial',      '1' );
-        $order->update_meta_data( '_wdg_partial_date', date('Y-m-d') );
-        $order->update_meta_data( '_wdg_partial_by',   $payload['group']['name'] ?? '' );
-
-        // Agregar nota al pedido si se ingresó
+        // Agregar nota al pedido
+        $note_label = ( $kind === 'not_delivered' ) ? '🚫 No entregado' : '⚠️ Entrega parcial';
         if ( ! empty($partial_note) ) {
-            $note_text = sprintf(
-                '⚠️ Entrega parcial por %s: %s',
-                $payload['group']['name'] ?? 'Repartidor',
-                $partial_note
+            $order->add_order_note(
+                sprintf( '%s por %s: %s', $note_label, $payload['group']['name'] ?? 'Repartidor', $partial_note ),
+                false, false
             );
-            $order->add_order_note( $note_text, false, false );
         } else {
             $order->add_order_note(
-                sprintf( '⚠️ Entrega parcial por %s (sin nota)', $payload['group']['name'] ?? 'Repartidor' ),
+                sprintf( '%s por %s (sin nota)', $note_label, $payload['group']['name'] ?? 'Repartidor' ),
                 false, false
             );
         }
@@ -1750,7 +1759,8 @@ class Woo_Delivery_Groups {
         // Actualizar evento en tabla de análisis
         $plan_id = $payload['plan_id'] ?? '';
         if ( $plan_id ) {
-            $this->update_event_status( $plan_id, $order_id, 'partial', array(
+            $event_status = ( $kind === 'not_delivered' ) ? 'not_visited' : 'partial';
+            $this->update_event_status( $plan_id, $order_id, $event_status, array(
                 'partial_note' => sanitize_textarea_field( $_POST['note']      ?? '' ),
                 'recipient'    => sanitize_text_field(     $_POST['recipient'] ?? '' ),
             ));
@@ -1787,13 +1797,16 @@ class Woo_Delivery_Groups {
         // Guardar entrega en meta del pedido WooCommerce (persiste entre días)
         $orders = $payload['group']['orders'] ?? array();
         foreach ( $done as $idx => $is_done ) {
-            if ( ! $is_done ) continue;
+            // Solo el estado "entregado" (true) marca entrega. Las paradas
+            // 'visited' (parcial / no entregado) NO se marcan como entregadas.
+            if ( $is_done !== true ) continue;
             $order_id = intval( $orders[ intval($idx) ]['id'] ?? 0 );
             if ( ! $order_id ) continue;
             $order = wc_get_order( $order_id );
             if ( ! $order ) continue;
             // Solo marcar si no estaba ya marcado
             if ( ! $order->get_meta('_wdg_delivered') ) {
+                $this->clear_delivery_state_metas( $order );
                 $order->update_meta_data( '_wdg_delivered',      '1' );
                 $order->update_meta_data( '_wdg_delivered_date', date('Y-m-d') );
                 $order->update_meta_data( '_wdg_delivered_by',   $payload['group']['name'] ?? '' );
@@ -3538,7 +3551,8 @@ function confirmNoEntregado() {
         fd.append('action',   'wdg_partial_order');
         fd.append('token',    ROUTE_TOKEN);
         fd.append('order_id', o.id);
-        fd.append('note',     note ? 'No entregado: ' + note : 'No entregado');
+        fd.append('kind',     'not_delivered');
+        fd.append('note',     note);
         fetch(WP_AJAX, {method:'POST', body:fd})
             .then(function(r){ return r.json(); })
             .then(function(data){ console.log('[WDG] no_entregado #'+o.id+':', data); })
@@ -3618,7 +3632,7 @@ var wdgPhotoOrderIdx = null; // índice de la parada actual al abrir el modal de
 var wdgPhotoMode     = 'complete'; // 'complete' o 'partial'
 
 function markDoneAndNext() {
-    if (done[currentIdx] === 'visited' && !confirm('Este pedido está marcado como ⚠️ Parcial.\n¿Cambiarlo a ✅ Entregado?')) return;
+    if (done[currentIdx] === 'visited' && !confirm('Este pedido está marcado como ⚠️ Parcial / No entregado.\n¿Cambiarlo a ✅ Entregado?')) return;
     // Abrir modal de foto antes de completar
     wdgPhotoOrderIdx = currentIdx;
     wdgPhotoMode     = 'complete';
