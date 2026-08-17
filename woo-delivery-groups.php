@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WooCommerce Delivery Groups
  * Description: Agrupa pedidos por cercanía geográfica (K-Means++) y optimiza rutas de reparto (TSP). Considera bodega como punto de inicio y retorno.
- * Version:     2.24.0
+ * Version:     2.24.1
  * Author:      Webpremium Chile
  * Text Domain: woo-delivery-groups
  */
@@ -12,7 +12,7 @@ defined( 'ABSPATH' ) || exit;
 class Woo_Delivery_Groups {
 
     const SLUG        = 'woo-delivery-groups';
-    const VERSION     = '2.24.0';
+    const VERSION     = '2.24.1';
     const OPT_API_KEY = 'wga_google_maps_api_key';
     const OPT_DEPOT       = 'wdg_depot';       // array: address, lat, lng
     const OPT_SEND_EMAIL  = 'wdg_send_photo_email'; // 1 = enviar, 0 = no enviar
@@ -312,13 +312,20 @@ class Woo_Delivery_Groups {
                         </h2>
                         <div id="wdgProgressList"></div>
                         <hr class="wdg-divider">
-                        <button id="btnReleasePending" class="button" style="width:100%" onclick="wdgReleasePending()">
+                        <button id="btnReleasePending" class="button" style="width:100%" onclick="wdgReleasePending()" disabled>
                             🔄 Liberar pendientes
                         </button>
                         <p class="wdg-sub" style="margin:6px 0 0;font-size:11px">
                             Devuelve al pool los pedidos parciales y no entregados de este plan, para incluirlos en la próxima ruta.
                         </p>
                         <div id="wdgReleaseStatus" style="font-size:12px;margin-top:6px"></div>
+                        <div id="wdgReleasePanel" style="display:none;margin-top:12px">
+                            <div id="wdgReleaseList"></div>
+                            <button id="btnConfirmRelease" class="button button-primary button-large"
+                                    style="width:100%;margin-top:12px" onclick="wdgConfirmRelease()">
+                                ✅ Confirmar liberación
+                            </button>
+                        </div>
                     </div>
 
                 </div><!-- /.wdg-panel -->
@@ -3124,11 +3131,14 @@ class Woo_Delivery_Groups {
     // ── Liberar los pendientes de un plan (parciales y no entregados) ─────────
     // Con dry_run=1 solo devuelve la lista, para que la UI la muestre antes de
     // confirmar. Sin dry_run, los libera y los devuelve al estado configurado.
+    // order_ids (opcional) limita la liberación a un subconjunto de esa lista.
     public function ajax_release_pending() {
         check_ajax_referer( 'wdg_nonce', 'nonce' );
 
         $plan_id = sanitize_text_field( $_POST['plan_id'] ?? '' );
         $dry_run = ( $_POST['dry_run'] ?? '' ) === '1';
+        $only    = json_decode( stripslashes( $_POST['order_ids'] ?? '[]' ), true );
+        $only    = is_array($only) ? array_map('intval', $only) : array();
 
         if ( empty($plan_id) ) { wp_send_json_error('ID de plan requerido'); }
 
@@ -3164,9 +3174,17 @@ class Woo_Delivery_Groups {
             ) );
         }
 
+        // Si la UI mandó una selección, liberar solo esos (y solo si de verdad
+        // están pendientes: nunca liberamos algo fuera de la lista calculada).
+        $ids = array_column( $pending, 'id' );
+        if ( ! empty($only) ) {
+            $ids = array_values( array_intersect( $ids, $only ) );
+            if ( empty($ids) ) { wp_send_json_error('Ninguno de los pedidos seleccionados está pendiente'); }
+        }
+
         $res = $this->release_orders_from_plan(
             $plan_id,
-            array_column( $pending, 'id' ),
+            $ids,
             true,
             'Liberado de la ruta para replanificación (quedó pendiente)'
         );
@@ -3176,12 +3194,13 @@ class Woo_Delivery_Groups {
             'plan_id'  => $plan_id,
             'released' => $res['removed'],
             'status'   => $this->get_return_status(),
+            'seleccion'=> empty($only) ? 'todos' : count($ids),
         ));
 
         wp_send_json_success( array(
-            'released' => $res['removed'],
-            'groups'   => $res['groups'],
-            'orders'   => $pending,
+            'released'  => $res['removed'],
+            'groups'    => $res['groups'],
+            'remaining' => count($pending) - count($ids),
         ) );
     }
 

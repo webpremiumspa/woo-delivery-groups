@@ -1452,6 +1452,11 @@ if (g.token) activeTokens[i] = g.token;
             // Progreso
             showProgressPanel();
 
+            // Liberar pendientes: contar sin que el usuario tenga que pulsar
+            $('#wdgReleasePanel').hide();
+            $('#wdgReleaseStatus').html('');
+            window.wdgRefreshPendingCount();
+
             // Cambiar a tab de nueva planificación (donde está el mapa y grupos)
             switchTab('new');
         });
@@ -1873,16 +1878,19 @@ if (g.token) activeTokens[i] = g.token;
     };
 
     // ── Liberar pendientes (parciales / no entregados) del plan actual ────────
-    // Dos pasos: primero pide la lista (dry_run) y la muestra, y solo si el
-    // usuario confirma ejecuta la liberación.
-    window.wdgReleasePending = function() {
-        if (!planIsSaved || !currentPlanId) {
-            alert('Guarda la planificación antes de liberar pendientes.');
-            return;
-        }
+    // El contador se refresca solo al cargar el plan, así se ve cuántos hay sin
+    // tener que pulsar. El botón despliega la lista con checkboxes; la
+    // liberación real ocurre en wdgConfirmRelease().
+    var wdgPendingOrders = [];   // lista del último dry_run
+    var wdgReturnStatus  = '';
 
-        var $btn = $('#btnReleasePending').prop('disabled', true).text('Buscando pendientes…');
-        var $st  = $('#wdgReleaseStatus').html('');
+    // Consulta los pendientes del plan y actualiza el botón. Con show=true
+    // además despliega el panel con la lista.
+    function wdgFetchPending(show) {
+        if (!planIsSaved || !currentPlanId) return;
+
+        var $btn = $('#btnReleasePending');
+        if (show) $btn.prop('disabled', true).text('Buscando pendientes…');
 
         $.post(wdgData.ajaxUrl, {
             action:  'wdg_release_pending',
@@ -1890,41 +1898,122 @@ if (g.token) activeTokens[i] = g.token;
             plan_id: currentPlanId,
             dry_run: '1',
         }, function(res) {
-            $btn.prop('disabled', false).text('🔄 Liberar pendientes');
-            if (!res.success) { $st.html('<span style="color:#b91c1c">❌ ' + (res.data||'Error') + '</span>'); return; }
-
-            if (!res.data.count) {
-                $st.html('<span class="wdg-depot-ok">✅ No hay pedidos pendientes en este plan.</span>');
+            if (!res.success) {
+                $btn.prop('disabled', true).text('🔄 Liberar pendientes');
+                if (show) $('#wdgReleaseStatus').html('<span style="color:#b91c1c">❌ ' + escHtml(res.data||'Error') + '</span>');
                 return;
             }
 
-            var lines = res.data.orders.map(function(o) {
-                var icon = o.kind === 'not_delivered' ? '🚫' : '⚠️';
-                return icon + ' #' + o.id + ' · ' + (o.route || '') + (o.customer ? ' · ' + o.customer : '');
-            }).join('\n');
+            wdgPendingOrders = res.data.orders || [];
+            wdgReturnStatus  = res.data.return_status || '';
+            var n = wdgPendingOrders.length;
 
-            var msg = 'Se liberarán ' + res.data.count + ' pedido(s) de este plan:\n\n' + lines
-                    + '\n\nQuedarán en estado "' + res.data.return_status + '" y se quitarán de sus rutas'
-                    + ' (las rutas afectadas se reoptimizan y su enlace de conductor cambia).\n\n¿Continuar?';
-            if (!confirm(msg)) return;
+            if (!n) {
+                $btn.prop('disabled', true).text('🔄 Sin pedidos pendientes');
+                $('#wdgReleasePanel').hide();
+                if (show) $('#wdgReleaseStatus').html('<span class="wdg-depot-ok">✅ No hay pedidos pendientes en este plan.</span>');
+                return;
+            }
 
-            $btn.prop('disabled', true).text('Liberando…');
-            $.post(wdgData.ajaxUrl, {
-                action:  'wdg_release_pending',
-                nonce:   wdgData.nonce,
-                plan_id: currentPlanId,
-            }, function(res2) {
-                $btn.prop('disabled', false).text('🔄 Liberar pendientes');
-                if (!res2.success) { $st.html('<span style="color:#b91c1c">❌ ' + (res2.data||'Error') + '</span>'); return; }
-                $st.html('<span class="wdg-depot-ok">✅ ' + res2.data.released + ' pedido(s) liberado(s). Ya están disponibles al buscar pedidos.</span>');
-                window.wdgLoadPlan(currentPlanId);
-            }).fail(function() {
-                $btn.prop('disabled', false).text('🔄 Liberar pendientes');
-                $st.html('<span style="color:#b91c1c">❌ Error de conexión</span>');
-            });
+            $btn.prop('disabled', false).text('🔄 Liberar pendientes (' + n + ')');
+
+            if (show) {
+                wdgPendingOrders.forEach(function(o){ o._include = true; });
+                $('#wdgReleaseStatus').html('<span style="color:#0369a1"><strong>' + n +
+                    '</strong> pedido(s) pendiente(s). Elige cuáles liberar y confirma.</span>');
+                wdgRenderPendingList();
+                $('#wdgReleasePanel').show();
+            }
         }).fail(function() {
+            if (show) $('#wdgReleaseStatus').html('<span style="color:#b91c1c">❌ Error de conexión</span>');
             $btn.prop('disabled', false).text('🔄 Liberar pendientes');
-            $st.html('<span style="color:#b91c1c">❌ Error de conexión</span>');
+        });
+    }
+    window.wdgRefreshPendingCount = function() { wdgFetchPending(false); };
+
+    window.wdgReleasePending = function() {
+        if (!planIsSaved || !currentPlanId) {
+            alert('Guarda la planificación antes de liberar pendientes.');
+            return;
+        }
+        wdgFetchPending(true);
+    };
+
+    function wdgRenderPendingList() {
+        var allChecked = wdgPendingOrders.every(function(o){ return o._include !== false; });
+        var html = '<table class="wdg-new-orders-table"><thead><tr>' +
+                   '<th><input type="checkbox" id="wdgRelCbAll"' + (allChecked ? ' checked' : '') + ' title="Seleccionar todos"></th>' +
+                   '<th>Pedido</th><th>Estado</th><th>Ruta</th><th>Cliente</th></tr></thead><tbody>';
+        wdgPendingOrders.forEach(function(o, i) {
+            var esNoEntregado = (o.kind === 'not_delivered');
+            var badge = esNoEntregado
+                ? '<span style="color:#b91c1c">🚫 No entregado</span>'
+                : '<span style="color:#b45309">⚠️ Parcial</span>';
+            var checked = (o._include !== false) ? ' checked' : '';
+            html += '<tr' + (o._include === false ? ' style="opacity:.5"' : '') + '>' +
+                    '<td style="text-align:center"><input type="checkbox" class="wdg-rel-cb" data-i="' + i + '"' + checked + '></td>' +
+                    '<td><a href="' + wdgData.adminUrl + 'post.php?post=' + o.id + '&action=edit" target="_blank">#' + o.id + '</a></td>' +
+                    '<td>' + badge + '</td>' +
+                    '<td>' + escHtml(o.route || '') + '</td>' +
+                    '<td>' + escHtml(o.customer || '') + '</td>' +
+                    '</tr>';
+        });
+        html += '</tbody></table>';
+        $('#wdgReleaseList').html(html);
+        wdgUpdateReleaseCount();
+    }
+
+    function wdgUpdateReleaseCount() {
+        var n = wdgPendingOrders.filter(function(o){ return o._include !== false; }).length;
+        $('#btnConfirmRelease')
+            .prop('disabled', n === 0)
+            .text(n === 0 ? 'Selecciona al menos uno' : '✅ Liberar ' + n + ' pedido(s)');
+    }
+
+    $(document).on('change', '#wdgRelCbAll', function() {
+        var on = $(this).is(':checked');
+        wdgPendingOrders.forEach(function(o){ o._include = on; });
+        wdgRenderPendingList();
+    });
+    $(document).on('change', '.wdg-rel-cb', function() {
+        var i = parseInt($(this).data('i'), 10);
+        if (wdgPendingOrders[i]) wdgPendingOrders[i]._include = $(this).is(':checked');
+        wdgRenderPendingList();
+    });
+
+    window.wdgConfirmRelease = function() {
+        var ids = wdgPendingOrders.filter(function(o){ return o._include !== false; })
+                                  .map(function(o){ return o.id; });
+        if (!ids.length) { alert('Selecciona al menos un pedido.'); return; }
+
+        if (!confirm('¿Liberar ' + ids.length + ' pedido(s)?\n\n' +
+                     'Quedarán en estado "' + wdgReturnStatus + '" y se quitarán de sus rutas. ' +
+                     'Las rutas afectadas se reoptimizan y su enlace de conductor cambia.')) return;
+
+        var $btn = $('#btnConfirmRelease').prop('disabled', true).text('Liberando…');
+        $.post(wdgData.ajaxUrl, {
+            action:    'wdg_release_pending',
+            nonce:     wdgData.nonce,
+            plan_id:   currentPlanId,
+            order_ids: JSON.stringify(ids),
+        }, function(res) {
+            $btn.prop('disabled', false);
+            if (!res.success) {
+                $('#wdgReleaseStatus').html('<span style="color:#b91c1c">❌ ' + escHtml(res.data||'Error') + '</span>');
+                wdgUpdateReleaseCount();
+                return;
+            }
+            var extra = res.data.remaining
+                ? ' Quedan ' + res.data.remaining + ' pendiente(s) sin liberar.'
+                : '';
+            $('#wdgReleasePanel').hide();
+            $('#wdgReleaseStatus').html('<span class="wdg-depot-ok">✅ ' + res.data.released +
+                ' pedido(s) liberado(s). Ya están disponibles al buscar pedidos.' + extra + '</span>');
+            window.wdgLoadPlan(currentPlanId);
+        }).fail(function() {
+            $btn.prop('disabled', false);
+            wdgUpdateReleaseCount();
+            $('#wdgReleaseStatus').html('<span style="color:#b91c1c">❌ Error de conexión</span>');
         });
     };
 
