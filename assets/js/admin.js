@@ -1872,6 +1872,62 @@ if (g.token) activeTokens[i] = g.token;
         $('#wdgSavePlanStatus').html('<span style="color:#15803d">✅ ' + n + ' pedido(s) quitado(s). Guarda el plan para fijar los cambios.</span>');
     };
 
+    // ── Liberar pendientes (parciales / no entregados) del plan actual ────────
+    // Dos pasos: primero pide la lista (dry_run) y la muestra, y solo si el
+    // usuario confirma ejecuta la liberación.
+    window.wdgReleasePending = function() {
+        if (!planIsSaved || !currentPlanId) {
+            alert('Guarda la planificación antes de liberar pendientes.');
+            return;
+        }
+
+        var $btn = $('#btnReleasePending').prop('disabled', true).text('Buscando pendientes…');
+        var $st  = $('#wdgReleaseStatus').html('');
+
+        $.post(wdgData.ajaxUrl, {
+            action:  'wdg_release_pending',
+            nonce:   wdgData.nonce,
+            plan_id: currentPlanId,
+            dry_run: '1',
+        }, function(res) {
+            $btn.prop('disabled', false).text('🔄 Liberar pendientes');
+            if (!res.success) { $st.html('<span style="color:#b91c1c">❌ ' + (res.data||'Error') + '</span>'); return; }
+
+            if (!res.data.count) {
+                $st.html('<span class="wdg-depot-ok">✅ No hay pedidos pendientes en este plan.</span>');
+                return;
+            }
+
+            var lines = res.data.orders.map(function(o) {
+                var icon = o.kind === 'not_delivered' ? '🚫' : '⚠️';
+                return icon + ' #' + o.id + ' · ' + (o.route || '') + (o.customer ? ' · ' + o.customer : '');
+            }).join('\n');
+
+            var msg = 'Se liberarán ' + res.data.count + ' pedido(s) de este plan:\n\n' + lines
+                    + '\n\nQuedarán en estado "' + res.data.return_status + '" y se quitarán de sus rutas'
+                    + ' (las rutas afectadas se reoptimizan y su enlace de conductor cambia).\n\n¿Continuar?';
+            if (!confirm(msg)) return;
+
+            $btn.prop('disabled', true).text('Liberando…');
+            $.post(wdgData.ajaxUrl, {
+                action:  'wdg_release_pending',
+                nonce:   wdgData.nonce,
+                plan_id: currentPlanId,
+            }, function(res2) {
+                $btn.prop('disabled', false).text('🔄 Liberar pendientes');
+                if (!res2.success) { $st.html('<span style="color:#b91c1c">❌ ' + (res2.data||'Error') + '</span>'); return; }
+                $st.html('<span class="wdg-depot-ok">✅ ' + res2.data.released + ' pedido(s) liberado(s). Ya están disponibles al buscar pedidos.</span>');
+                window.wdgLoadPlan(currentPlanId);
+            }).fail(function() {
+                $btn.prop('disabled', false).text('🔄 Liberar pendientes');
+                $st.html('<span style="color:#b91c1c">❌ Error de conexión</span>');
+            });
+        }).fail(function() {
+            $btn.prop('disabled', false).text('🔄 Liberar pendientes');
+            $st.html('<span style="color:#b91c1c">❌ Error de conexión</span>');
+        });
+    };
+
     function wdgClientRemoveMany(ids) {
         var groups = window.wdgGroups;
         var idset  = {};
@@ -2029,11 +2085,16 @@ if (res.success) {
             action:           'wdg_save_config',
             nonce:            wdgData.nonce,
             send_photo_email: $('#wdgSendPhotoEmail').is(':checked') ? '1' : undefined,
+            return_status:    $('#wdgReturnStatus').val(),
+            auto_release:     $('#wdgAutoRelease').is(':checked') ? '1' : undefined,
         }, function(res) {
             $btn.prop('disabled', false).text('💾 Guardar');
             if (res.success) {
                 var estado = res.data.send_photo_email === '1' ? 'activado' : 'desactivado';
-                $('#wdgConfigStatus').html('<span class="wdg-depot-ok">✅ Correo con foto ' + estado + '</span>');
+                var libre  = res.data.auto_release === '1' ? 'automática' : 'manual';
+                $('#wdgConfigStatus').html('<span class="wdg-depot-ok">✅ Correo con foto ' + estado
+                    + ' · Retorno: <code>' + res.data.return_status + '</code>'
+                    + ' · Liberación ' + libre + '</span>');
             } else {
                 $('#wdgConfigStatus').html('<span style="color:#b91c1c">❌ ' + (res.data||'Error') + '</span>');
             }

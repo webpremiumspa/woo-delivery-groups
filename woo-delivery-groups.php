@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WooCommerce Delivery Groups
  * Description: Agrupa pedidos por cercanía geográfica (K-Means++) y optimiza rutas de reparto (TSP). Considera bodega como punto de inicio y retorno.
- * Version:     2.23.0
+ * Version:     2.24.0
  * Author:      Webpremium Chile
  * Text Domain: woo-delivery-groups
  */
@@ -12,10 +12,16 @@ defined( 'ABSPATH' ) || exit;
 class Woo_Delivery_Groups {
 
     const SLUG        = 'woo-delivery-groups';
-    const VERSION     = '2.23.0';
+    const VERSION     = '2.24.0';
     const OPT_API_KEY = 'wga_google_maps_api_key';
     const OPT_DEPOT       = 'wdg_depot';       // array: address, lat, lng
     const OPT_SEND_EMAIL  = 'wdg_send_photo_email'; // 1 = enviar, 0 = no enviar
+    const OPT_RETURN_STATUS = 'wdg_return_status';  // estado al liberar un pedido de su ruta
+    const OPT_AUTO_RELEASE  = 'wdg_auto_release';   // 1 = liberar pendientes al cerrar la ruta
+
+    // Estado por defecto al liberar. Coincide con el default del buscador de
+    // pedidos, para que un pedido liberado reaparezca en la próxima planificación.
+    const DEFAULT_RETURN_STATUS = 'en-ruta';
 
     // Bounding box Santiago
     const LAT_MIN = -33.70;
@@ -35,6 +41,23 @@ class Woo_Delivery_Groups {
             'lat'     => -33.5147,
             'lng'     => -70.7680,
         ));
+    }
+
+    // Estado al que vuelve un pedido liberado de su ruta. Si el estado guardado
+    // ya no existe (plugin de estados desactivado), cae al default.
+    private function get_return_status() {
+        $status = get_option( self::OPT_RETURN_STATUS, self::DEFAULT_RETURN_STATUS );
+        $status = str_replace( 'wc-', '', (string) $status );
+        if ( $status === '' || ! isset( wc_get_order_statuses()['wc-' . $status] ) ) {
+            return self::DEFAULT_RETURN_STATUS;
+        }
+        return $status;
+    }
+
+    // ¿El pedido quedó pendiente en su ruta (entrega parcial o no entregado)?
+    private function is_pending_delivery( $order ) {
+        return $order->get_meta('_wdg_partial')       === '1'
+            || $order->get_meta('_wdg_not_delivered') === '1';
     }
 
     public function __construct() {
@@ -59,6 +82,7 @@ class Woo_Delivery_Groups {
         add_action( 'wp_ajax_wdg_reassign_orders', array( $this, 'ajax_reassign_orders' ) );
         add_action( 'wp_ajax_wdg_remove_order',     array( $this, 'ajax_remove_order' ) );
         add_action( 'wp_ajax_wdg_remove_orders',    array( $this, 'ajax_remove_orders' ) );
+        add_action( 'wp_ajax_wdg_release_pending',  array( $this, 'ajax_release_pending' ) );
         add_action( 'wp_ajax_wdg_get_log',          array( $this, 'ajax_get_log' ) );
         add_action( 'wp_ajax_wdg_query_events',     array( $this, 'ajax_query_events' ) );
         add_action( 'wp_ajax_wdg_save_driver',      array( $this, 'ajax_save_driver' ) );
@@ -287,6 +311,14 @@ class Woo_Delivery_Groups {
                             <span id="wdgAutoRefreshBadge" style="font-size:10px;color:#64748b;margin-left:6px">Auto-actualiza cada 30s</span>
                         </h2>
                         <div id="wdgProgressList"></div>
+                        <hr class="wdg-divider">
+                        <button id="btnReleasePending" class="button" style="width:100%" onclick="wdgReleasePending()">
+                            🔄 Liberar pendientes
+                        </button>
+                        <p class="wdg-sub" style="margin:6px 0 0;font-size:11px">
+                            Devuelve al pool los pedidos parciales y no entregados de este plan, para incluirlos en la próxima ruta.
+                        </p>
+                        <div id="wdgReleaseStatus" style="font-size:12px;margin-top:6px"></div>
                     </div>
 
                 </div><!-- /.wdg-panel -->
@@ -496,8 +528,48 @@ class Woo_Delivery_Groups {
                             <input type="checkbox" id="wdgSendPhotoEmail" <?php echo get_option( self::OPT_SEND_EMAIL, '1' ) === '1' ? 'checked' : ''; ?>>
                             <span>Enviar correo con foto al cliente</span>
                         </label>
+                    </div>
+
+                    <hr class="wdg-divider">
+                    <h2 style="margin-top:0">🔄 Pedidos pendientes</h2>
+                    <p class="wdg-card-desc">
+                        Un pedido con <strong>entrega parcial</strong> o <strong>no entregado</strong> queda en
+                        <code>en-ruta-pendiente</code> y deja de aparecer al buscar pedidos.
+                        Al <em>liberarlo</em> vuelve al estado que elijas aquí, se desvincula de su ruta y queda
+                        disponible para la próxima planificación.
+                    </p>
+                    <div class="wdg-field">
+                        <label>Estado de retorno al liberar</label>
+                        <select id="wdgReturnStatus">
+                            <?php
+                            $current_return = $this->get_return_status();
+                            foreach ( wc_get_order_statuses() as $slug => $label ) :
+                                $selected = selected( $slug, 'wc-' . $current_return, false );
+                            ?>
+                            <option value="<?php echo esc_attr($slug); ?>" <?php echo $selected; ?>>
+                                <?php echo esc_html($label); ?>
+                            </option>
+                            <?php endforeach; ?>
+                        </select>
+                        <?php if ( $current_return !== self::DEFAULT_RETURN_STATUS ) : ?>
+                            <p class="wdg-depot-warn" style="margin:6px 0 0;font-size:12px">
+                                ⚠️ El buscador de pedidos viene por defecto en
+                                <code><?php echo esc_html(self::DEFAULT_RETURN_STATUS); ?></code>.
+                                Con otro estado de retorno tendrás que seleccionarlo manualmente al planificar.
+                            </p>
+                        <?php endif; ?>
+                    </div>
+                    <div class="wdg-config-toggle-row">
+                        <label class="wdg-toggle-label">
+                            <input type="checkbox" id="wdgAutoRelease" <?php echo get_option( self::OPT_AUTO_RELEASE, '0' ) === '1' ? 'checked' : ''; ?>>
+                            <span>Liberar automáticamente al cerrar la ruta</span>
+                        </label>
                         <button id="btnSaveConfig" class="button button-primary">💾 Guardar</button>
                     </div>
+                    <p class="wdg-card-desc" style="margin-top:4px">
+                        Con esto activo, cuando el repartidor toca «Terminar» sus pedidos pendientes se liberan solos.
+                        Los pedidos <strong>nunca visitados</strong> no se tocan: conservan su estado y ya reaparecen solos.
+                    </p>
                     <div id="wdgConfigStatus" class="wdg-config-status"></div>
                     <div class="wdg-config-api-row">
                         <input type="text" id="wdgConfigApiKey" class="regular-text"
@@ -1407,17 +1479,51 @@ class Woo_Delivery_Groups {
         $plan_id = $payload['plan_id'] ?? '';
         if ( ! $plan_id ) { wp_send_json_success('Sin plan_id, nada que registrar'); }
 
-        // Marcar pedidos pendientes como 'not_visited'
+        // Marcar como 'not_visited' SOLO los que nunca se tocaron. Un pedido con
+        // entrega parcial o marcado como no entregado ya tiene su propio evento
+        // (partial / not_visited) escrito por ajax_partial_order; sobreescribirlo
+        // aquí borraría la distinción entre ambos casos.
+        $marked  = 0;
+        $to_free = array();
         foreach ( (array)$pending_ids as $order_id ) {
-            $this->update_event_status( $plan_id, intval($order_id), 'not_visited' );
+            $order_id = intval($order_id);
+            if ( ! $order_id ) continue;
+            $order = wc_get_order( $order_id );
+
+            if ( $order && $this->is_pending_delivery( $order ) ) {
+                $to_free[] = $order_id;   // ya tiene evento propio; no lo pisamos
+                continue;
+            }
+
+            $this->update_event_status( $plan_id, $order_id, 'not_visited' );
+            $marked++;
         }
 
         $this->log('OK', 'finish_route: not_visited marcados', array(
             'plan_id' => $plan_id,
-            'count'   => count($pending_ids),
+            'count'   => $marked,
+            'pendientes_con_estado_propio' => count($to_free),
         ));
 
-        wp_send_json_success( array('marked' => count($pending_ids)) );
+        // Liberación automática (opt-in): devuelve al pool los pedidos que
+        // quedaron parciales o no entregados. Los nunca visitados NO se liberan:
+        // conservan su estado original y ya reaparecen solos en la próxima
+        // planificación, así que sacarlos desarmaría la ruta sin necesidad.
+        $released = 0;
+        if ( ! empty($to_free) && get_option( self::OPT_AUTO_RELEASE, '0' ) === '1' ) {
+            $res = $this->release_orders_from_plan(
+                $plan_id, $to_free, true,
+                'Liberado al cerrar la ruta (quedó pendiente)'
+            );
+            $released = $res['removed'] ?? 0;
+            $this->log('OK', 'finish_route: pendientes liberados', array(
+                'plan_id'  => $plan_id,
+                'released' => $released,
+                'status'   => $this->get_return_status(),
+            ));
+        }
+
+        wp_send_json_success( array( 'marked' => $marked, 'released' => $released ) );
     }
 
     // ── Insertar/actualizar eventos al generar link de conductor ─────────────
@@ -1442,6 +1548,22 @@ class Woo_Delivery_Groups {
             if ( ! $order_id ) continue;
             $wc_order = wc_get_order( $order_id );
             if ( ! $wc_order ) continue;
+
+            // Si el pedido venía de OTRO plan, desvincularlo de ese plan primero.
+            // Sin esto el plan viejo y el token de su conductor lo siguen listando,
+            // y el repartidor de ayer lo ve en su ruta. Sin cambio de estado: el
+            // pedido se está asignando ahora mismo, no volviendo al pool.
+            $prev_plan_id = (string) $wc_order->get_meta('_wdg_plan_id');
+            if ( $prev_plan_id !== '' && $prev_plan_id !== (string) $plan_id ) {
+                $this->release_orders_from_plan( $prev_plan_id, array($order_id), false );
+                $this->log('OK', 'write_route_metas: desvinculado del plan anterior', array(
+                    'order_id'      => $order_id,
+                    'plan_anterior' => $prev_plan_id,
+                    'plan_nuevo'    => $plan_id,
+                ));
+                $wc_order = wc_get_order( $order_id ); // recargar: se limpiaron metas
+                if ( ! $wc_order ) continue;
+            }
             $wc_order->update_meta_data( '_wdg_route',         $route_name );
             $wc_order->update_meta_data( '_wdg_plan_id',       $plan_id );
             $wc_order->update_meta_data( '_wdg_plan_name',     $plan_name );
@@ -1722,7 +1844,11 @@ class Woo_Delivery_Groups {
 
         $order->update_status(
             $target_status,
-            sprintf( 'Entrega parcial/pendiente por conductor: %s', $payload['group']['name'] ?? 'Repartidor' )
+            sprintf(
+                '%s por conductor: %s',
+                $kind === 'not_delivered' ? 'No entregado' : 'Entrega parcial/pendiente',
+                $payload['group']['name'] ?? 'Repartidor'
+            )
         );
 
         $partial_note = sanitize_textarea_field( $_POST['note'] ?? '' );
@@ -2182,7 +2308,23 @@ class Woo_Delivery_Groups {
         if ( ! current_user_can('manage_options') ) { wp_send_json_error('Sin permiso'); }
         $send_email = isset($_POST['send_photo_email']) ? '1' : '0';
         update_option( self::OPT_SEND_EMAIL, $send_email );
-        wp_send_json_success( array( 'send_photo_email' => $send_email ) );
+
+        // Estado de retorno al liberar un pedido (validado contra los estados reales)
+        if ( isset($_POST['return_status']) ) {
+            $return_status = str_replace( 'wc-', '', sanitize_text_field( $_POST['return_status'] ) );
+            if ( isset( wc_get_order_statuses()['wc-' . $return_status] ) ) {
+                update_option( self::OPT_RETURN_STATUS, $return_status );
+            }
+        }
+
+        $auto_release = isset($_POST['auto_release']) ? '1' : '0';
+        update_option( self::OPT_AUTO_RELEASE, $auto_release );
+
+        wp_send_json_success( array(
+            'send_photo_email' => $send_email,
+            'return_status'    => $this->get_return_status(),
+            'auto_release'     => $auto_release,
+        ) );
     }
 
     public function ajax_save_api_key() {
@@ -2857,6 +2999,74 @@ class Woo_Delivery_Groups {
         ) );
     }
 
+    // ── Liberar pedidos de un plan ────────────────────────────────────────────
+    // Primitivo compartido: saca los pedidos de sus grupos, reoptimiza cada ruta
+    // afectada (lo que refresca su token), limpia los metas de ruta y —si se pide—
+    // devuelve el pedido al estado configurado para que vuelva a estar disponible
+    // en la próxima planificación.
+    //
+    // NO borra _wdg_partial / _wdg_not_delivered: son el registro de por qué el
+    // pedido volvió. Se limpian solos al entregarse (clear_delivery_state_metas).
+    //
+    // Devuelve array( 'removed' => int, 'groups' => array ).
+    private function release_orders_from_plan( $plan_id, $order_ids, $restore_status = false, $reason = '' ) {
+        $plan = get_option( $this->get_plan_key($plan_id) );
+        if ( empty($plan) ) return array( 'removed' => 0, 'groups' => array(), 'error' => 'Plan no encontrado' );
+
+        $depot = $plan['depot'] ?? $this->get_depot();
+
+        $remove = array();
+        foreach ( (array) $order_ids as $id ) { $id = intval($id); if ( $id ) $remove[$id] = true; }
+        if ( empty($remove) ) return array( 'removed' => 0, 'groups' => $plan['groups'] ?? array() );
+
+        // Tokens por ruta y rutas afectadas (las que contienen algún pedido a quitar)
+        $tokens   = array();
+        $affected = array();
+        foreach ( $plan['groups'] as $gi => $g ) {
+            $tokens[$gi] = $plan['tokens'][$gi] ?? $plan['tokens'][$g['name']] ?? '';
+            foreach ( ($g['orders'] ?? array()) as $o ) {
+                if ( isset($remove[ intval($o['id']) ]) ) { $affected[$gi] = true; break; }
+            }
+        }
+        if ( empty($affected) ) {
+            return array( 'removed' => 0, 'groups' => $plan['groups'], 'error' => 'Ningún pedido está en este plan' );
+        }
+
+        $return_status = $restore_status ? $this->get_return_status() : '';
+        $removed       = 0;
+
+        foreach ( array_keys($affected) as $gi ) {
+            $token = $tokens[$gi];
+            $state = $this->group_delivery_state( $plan['groups'][$gi]['orders'] ?? array(), $token );
+            $kept  = array();
+            foreach ( $plan['groups'][$gi]['orders'] as $o ) {
+                $oid = intval($o['id']);
+                if ( ! isset($remove[$oid]) ) { $kept[] = $o; continue; }
+
+                unset( $state[$oid] );
+                $this->clear_order_route_metas( $oid );
+
+                if ( $restore_status ) {
+                    $wc_order = wc_get_order( $oid );
+                    if ( $wc_order && $wc_order->get_status() !== $return_status ) {
+                        $wc_order->update_status(
+                            $return_status,
+                            $reason !== '' ? $reason : 'Liberado de su ruta para replanificación'
+                        );
+                    }
+                }
+                $removed++;
+            }
+            $group = &$plan['groups'][$gi];
+            $this->rebuild_group( $group, $token, $kept, $state, $depot );
+            unset( $group );
+        }
+
+        update_option( $this->get_plan_key($plan_id), $plan, false );
+
+        return array( 'removed' => $removed, 'groups' => $plan['groups'] );
+    }
+
     // ── Quitar un pedido de su ruta (lo deja sin asignar y limpia sus metas) ───
     public function ajax_remove_order() {
         check_ajax_referer( 'wdg_nonce', 'nonce' );
@@ -2867,55 +3077,21 @@ class Woo_Delivery_Groups {
         if ( empty($plan_id) ) { wp_send_json_error('ID de plan requerido'); }
         if ( ! $order_id )     { wp_send_json_error('ID de pedido requerido'); }
 
-        $plan = get_option( $this->get_plan_key($plan_id) );
-        if ( empty($plan) ) { wp_send_json_error('Plan no encontrado'); }
-
-        $depot = $plan['depot'] ?? $this->get_depot();
-
-        // Localizar la ruta (grupo) del pedido y su token
-        $home_gi = null;
-        $token   = '';
-        foreach ( $plan['groups'] as $gi => $g ) {
-            foreach ( ($g['orders'] ?? array()) as $o ) {
-                if ( intval($o['id']) === $order_id ) {
-                    $home_gi = $gi;
-                    $token   = $plan['tokens'][$gi] ?? $plan['tokens'][$g['name']] ?? '';
-                    break 2;
-                }
-            }
+        // Quitar de la ruta NO cambia el estado del pedido: es una acción de
+        // planificación. Para devolverlo al pool usa "Liberar pendientes".
+        $res = $this->release_orders_from_plan( $plan_id, array($order_id), false );
+        if ( ! empty($res['error']) ) {
+            wp_send_json_error( $res['error'] === 'Plan no encontrado' ? 'Plan no encontrado' : 'El pedido no está en este plan' );
         }
-        if ( $home_gi === null ) { wp_send_json_error('El pedido no está en este plan'); }
-
-        // Estado de entrega de la ruta de origen (los entregados que se quedan
-        // permanecen fijos al reoptimizar). Se permite quitar incluso entregados.
-        $state    = $this->group_delivery_state( $plan['groups'][$home_gi]['orders'] ?? array(), $token );
-        $id_state = $state;
-        unset( $id_state[$order_id] );
-
-        // Quitar el pedido y reconstruir la ruta (reoptimiza + refresca token)
-        $kept = array();
-        foreach ( $plan['groups'][$home_gi]['orders'] as $o ) {
-            if ( intval($o['id']) === $order_id ) continue;
-            $kept[] = $o;
-        }
-        $group = &$plan['groups'][$home_gi];
-        $this->rebuild_group( $group, $token, $kept, $id_state, $depot );
-        unset( $group );
-
-        update_option( $this->get_plan_key($plan_id), $plan, false );
-
-        // Limpiar los metas de ruta del pedido (queda sin asignar)
-        $this->clear_order_route_metas( $order_id );
 
         $this->log('OK', 'remove_order: pedido quitado de la ruta', array(
             'plan_id'  => $plan_id,
             'order_id' => $order_id,
-            'group'    => $home_gi,
         ));
 
         wp_send_json_success( array(
             'order_id' => $order_id,
-            'groups'   => $plan['groups'],
+            'groups'   => $res['groups'],
         ) );
     }
 
@@ -2929,56 +3105,83 @@ class Woo_Delivery_Groups {
         if ( empty($plan_id) )                        { wp_send_json_error('ID de plan requerido'); }
         if ( empty($ids_raw) || ! is_array($ids_raw) ) { wp_send_json_error('Sin pedidos para quitar'); }
 
-        $plan = get_option( $this->get_plan_key($plan_id) );
-        if ( empty($plan) ) { wp_send_json_error('Plan no encontrado'); }
-
-        $depot  = $plan['depot'] ?? $this->get_depot();
-
-        $remove = array();
-        foreach ( $ids_raw as $id ) { $id = intval($id); if ( $id ) $remove[$id] = true; }
-
-        // Tokens por ruta y rutas afectadas (las que contienen algún pedido a quitar)
-        $tokens   = array();
-        $affected = array();
-        foreach ( $plan['groups'] as $gi => $g ) {
-            $tokens[$gi] = $plan['tokens'][$gi] ?? $plan['tokens'][$g['name']] ?? '';
-            foreach ( ($g['orders'] ?? array()) as $o ) {
-                if ( isset($remove[ intval($o['id']) ]) ) { $affected[$gi] = true; break; }
-            }
+        $res = $this->release_orders_from_plan( $plan_id, $ids_raw, false );
+        if ( ! empty($res['error']) ) {
+            wp_send_json_error( $res['error'] === 'Plan no encontrado' ? 'Plan no encontrado' : 'Ningún pedido seleccionado está en este plan' );
         }
-        if ( empty($affected) ) { wp_send_json_error('Ningún pedido seleccionado está en este plan'); }
-
-        // Quitar de cada ruta afectada, limpiar metas y reoptimizar (refresca token)
-        $removed = 0;
-        foreach ( array_keys($affected) as $gi ) {
-            $token = $tokens[$gi];
-            $state = $this->group_delivery_state( $plan['groups'][$gi]['orders'] ?? array(), $token );
-            $kept  = array();
-            foreach ( $plan['groups'][$gi]['orders'] as $o ) {
-                $oid = intval($o['id']);
-                if ( isset($remove[$oid]) ) {
-                    unset( $state[$oid] );
-                    $this->clear_order_route_metas( $oid );
-                    $removed++;
-                    continue;
-                }
-                $kept[] = $o;
-            }
-            $group = &$plan['groups'][$gi];
-            $this->rebuild_group( $group, $token, $kept, $state, $depot );
-            unset( $group );
-        }
-
-        update_option( $this->get_plan_key($plan_id), $plan, false );
 
         $this->log('OK', 'remove_orders: pedidos quitados de sus rutas', array(
             'plan_id' => $plan_id,
-            'removed' => $removed,
+            'removed' => $res['removed'],
         ));
 
         wp_send_json_success( array(
-            'removed' => $removed,
-            'groups'  => $plan['groups'],
+            'removed' => $res['removed'],
+            'groups'  => $res['groups'],
+        ) );
+    }
+
+    // ── Liberar los pendientes de un plan (parciales y no entregados) ─────────
+    // Con dry_run=1 solo devuelve la lista, para que la UI la muestre antes de
+    // confirmar. Sin dry_run, los libera y los devuelve al estado configurado.
+    public function ajax_release_pending() {
+        check_ajax_referer( 'wdg_nonce', 'nonce' );
+
+        $plan_id = sanitize_text_field( $_POST['plan_id'] ?? '' );
+        $dry_run = ( $_POST['dry_run'] ?? '' ) === '1';
+
+        if ( empty($plan_id) ) { wp_send_json_error('ID de plan requerido'); }
+
+        $plan = get_option( $this->get_plan_key($plan_id) );
+        if ( empty($plan) ) { wp_send_json_error('Plan no encontrado'); }
+
+        // Recorrer el plan y quedarse con los que quedaron pendientes
+        $pending = array();
+        foreach ( ($plan['groups'] ?? array()) as $g ) {
+            foreach ( ($g['orders'] ?? array()) as $o ) {
+                $oid = intval( $o['id'] ?? 0 );
+                if ( ! $oid ) continue;
+                $wc_order = wc_get_order( $oid );
+                if ( ! $wc_order || ! $this->is_pending_delivery( $wc_order ) ) continue;
+                $pending[] = array(
+                    'id'       => $oid,
+                    'route'    => $g['name'] ?? '',
+                    'customer' => trim( $wc_order->get_billing_first_name() . ' ' . $wc_order->get_billing_last_name() ),
+                    'kind'     => $wc_order->get_meta('_wdg_not_delivered') === '1' ? 'not_delivered' : 'partial',
+                );
+            }
+        }
+
+        if ( empty($pending) ) {
+            wp_send_json_success( array( 'orders' => array(), 'count' => 0, 'released' => 0 ) );
+        }
+
+        if ( $dry_run ) {
+            wp_send_json_success( array(
+                'orders'        => $pending,
+                'count'         => count($pending),
+                'return_status' => $this->get_return_status(),
+            ) );
+        }
+
+        $res = $this->release_orders_from_plan(
+            $plan_id,
+            array_column( $pending, 'id' ),
+            true,
+            'Liberado de la ruta para replanificación (quedó pendiente)'
+        );
+        if ( ! empty($res['error']) ) { wp_send_json_error( $res['error'] ); }
+
+        $this->log('OK', 'release_pending: pendientes liberados', array(
+            'plan_id'  => $plan_id,
+            'released' => $res['removed'],
+            'status'   => $this->get_return_status(),
+        ));
+
+        wp_send_json_success( array(
+            'released' => $res['removed'],
+            'groups'   => $res['groups'],
+            'orders'   => $pending,
         ) );
     }
 
@@ -4036,6 +4239,14 @@ function wdgEndRoute() {
     var routeName = '<?php echo esc_js($name); ?>';
     var pending   = ORDERS.filter(function(o, i){ return !done[i] || done[i] === 'visited'; });
     var wa_number = '56952103997';
+
+    // Confirmar: cerrar la ruta marca los pendientes y no se puede deshacer
+    var aviso = pending.length === 0
+        ? '¿Terminar la ruta ' + routeName + '?\n\nNo quedan pedidos pendientes.'
+        : '¿Terminar la ruta ' + routeName + '?\n\nQuedan ' + pending.length + ' pedido(s) pendiente(s):\n'
+          + pending.map(function(o){ return '#' + o.id; }).join(', ')
+          + '\n\nSe registrarán como no visitados. Esta acción no se puede deshacer.';
+    if (!confirm(aviso)) return;
 
     // Notificar al servidor para marcar not_visited
     if (ROUTE_TOKEN && WP_AJAX && pending.length > 0) {
