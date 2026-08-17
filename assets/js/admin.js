@@ -1920,7 +1920,8 @@ if (g.token) activeTokens[i] = g.token;
             if (show) {
                 wdgPendingOrders.forEach(function(o){ o._include = true; });
                 $('#wdgReleaseStatus').html('<span style="color:#0369a1"><strong>' + n +
-                    '</strong> pedido(s) pendiente(s). Elige cuáles liberar y confirma.</span>');
+                    '</strong> pedido(s) pendiente(s). Volverán al estado <code>' +
+                    escHtml(wdgReturnStatus) + '</code>. Elige cuáles liberar y confirma.</span>');
                 wdgRenderPendingList();
                 $('#wdgReleasePanel').show();
             }
