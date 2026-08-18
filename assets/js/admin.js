@@ -2136,10 +2136,39 @@ if (res.success) {
 
     var wdgMoveState = { orderIdx: null, fromGroup: null, toGroup: null };
 
+    // Localiza un pedido por índices de grupo/parada en el render actual.
+    function wdgOrderAt(groupIdx, orderIdx) {
+        var groups = window.wdgGroups;
+        if (!groups || !groups[groupIdx] || !groups[groupIdx].orders) return null;
+        return groups[groupIdx].orders[orderIdx] || null;
+    }
+
+    // Con el plan ya guardado, el modal "Mover" no sirve: solo reordena el array del
+    // navegador y dejaría el servidor desincronizado. La reasignación sí está resuelta
+    // en servidor (wdg_reassign_orders reoptimiza y refresca los tokens), así que
+    // encaminamos el pedido hacia ese flujo en vez de bloquear la acción.
+    function wdgStartReassignFor(orderId) {
+        if (typeof infoWindows !== 'undefined' && infoWindows.forEach) {
+            infoWindows.forEach(function(w){ w.close(); });
+        }
+        wdgToggleReassign(true);
+        wdgClearSel();
+        wdgToggleSel(orderId, true);
+
+        var bar = document.getElementById('wdg-reassign-bar');
+        if (bar && bar.scrollIntoView) bar.scrollIntoView({ behavior:'smooth', block:'nearest' });
+
+        $('#wdgSavePlanStatus').html(
+            '<span style="color:#0369a1">Pedido #' + orderId + ' seleccionado. ' +
+            'Elige la ruta destino en la barra inferior y pulsa «Mover a esta ruta».</span>'
+        );
+    }
+
     window.wdgOpenMoveFromMap = function(groupIdx, orderIdx) {
         if (planIsSaved) {
-            alert('⛔ La planificación ya fue guardada. No se pueden mover pedidos entre rutas.');
-            infoWindows.forEach(function(w){ w.close(); });
+            var saved = wdgOrderAt(groupIdx, orderIdx);
+            if (!saved || !saved.id) { alert('No se pudo identificar el pedido.'); return; }
+            wdgStartReassignFor(saved.id);
             return;
         }
         // Cerrar InfoWindow
@@ -2182,12 +2211,17 @@ if (res.success) {
 
     $(document).on('click', '.wdg-btn-move', function(e) {
         e.stopPropagation();
+        var gi = parseInt($(this).data('group-idx'));
+        var oi = parseInt($(this).data('order-idx'));
+
         if (planIsSaved) {
-            alert('⛔ La planificación ya fue guardada. No se pueden mover pedidos entre rutas.\n\nSi necesitas cambios, elimina el plan y crea uno nuevo.');
+            var saved = wdgOrderAt(gi, oi);
+            if (!saved || !saved.id) { alert('No se pudo identificar el pedido.'); return; }
+            wdgStartReassignFor(saved.id);
             return;
         }
-        wdgMoveState.orderIdx  = parseInt($(this).data('order-idx'));
-        wdgMoveState.fromGroup = parseInt($(this).data('group-idx'));
+        wdgMoveState.orderIdx  = oi;
+        wdgMoveState.fromGroup = gi;
         wdgMoveState.toGroup   = null;
 
         var groups  = window.wdgGroups;
