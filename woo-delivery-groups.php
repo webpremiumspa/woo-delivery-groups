@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WooCommerce Delivery Groups
  * Description: Agrupa pedidos por cercanía geográfica (K-Means++) y optimiza rutas de reparto (TSP). Considera bodega como punto de inicio y retorno.
- * Version:     2.25.0
+ * Version:     2.25.1
  * Author:      Webpremium Chile
  * Text Domain: woo-delivery-groups
  */
@@ -12,7 +12,7 @@ defined( 'ABSPATH' ) || exit;
 class Woo_Delivery_Groups {
 
     const SLUG        = 'woo-delivery-groups';
-    const VERSION     = '2.25.0';
+    const VERSION     = '2.25.1';
     const OPT_API_KEY = 'wga_google_maps_api_key';
     const OPT_DEPOT       = 'wdg_depot';       // array: address, lat, lng
     const OPT_SEND_EMAIL  = 'wdg_send_photo_email'; // 1 = enviar, 0 = no enviar
@@ -1420,16 +1420,18 @@ class Woo_Delivery_Groups {
         // Marcar como 'not_visited' SOLO los que nunca se tocaron. Un pedido con
         // entrega parcial o marcado como no entregado ya tiene su propio evento
         // (partial / not_visited) escrito por ajax_partial_order; sobreescribirlo
-        // aquí borraría la distinción entre ambos casos. Esos, además, ya fueron
-        // liberados de la ruta en el momento de marcarlos.
-        $marked     = 0;
-        $con_estado = 0;
+        // aquí borraría la distinción entre ambos casos.
+        $marked  = 0;
+        $to_free = array();
         foreach ( (array)$pending_ids as $order_id ) {
             $order_id = intval($order_id);
             if ( ! $order_id ) continue;
             $order = wc_get_order( $order_id );
 
-            if ( $order && $this->is_pending_delivery( $order ) ) { $con_estado++; continue; }
+            if ( $order && $this->is_pending_delivery( $order ) ) {
+                $to_free[] = $order_id;   // ya tiene evento propio; no lo pisamos
+                continue;
+            }
 
             $this->update_event_status( $plan_id, $order_id, 'not_visited' );
             $marked++;
@@ -1438,10 +1440,29 @@ class Woo_Delivery_Groups {
         $this->log('OK', 'finish_route: not_visited marcados', array(
             'plan_id' => $plan_id,
             'count'   => $marked,
-            'pendientes_con_estado_propio' => $con_estado,
+            'pendientes_con_estado_propio' => count($to_free),
         ));
 
-        wp_send_json_success( array( 'marked' => $marked ) );
+        // Liberar aquí, y no al marcar, es deliberado: liberar reconstruye el grupo
+        // y reescribe el token, y hacerlo con el reparto en curso desfasa las
+        // posiciones que el teléfono del conductor tiene cargadas. Al cerrar la ruta
+        // ya nadie trabaja sobre ella, así que es el punto seguro.
+        //
+        // Solo se liberan los parciales / no entregados. Los nunca visitados
+        // conservan su estado original y ya reaparecen solos en la próxima
+        // planificación, así que sacarlos desarmaría la ruta sin necesidad.
+        $released = 0;
+        if ( ! empty($to_free) ) {
+            $res      = $this->release_orders_from_plan( $plan_id, $to_free );
+            $released = $res['removed'] ?? 0;
+            $this->log('OK', 'finish_route: pendientes liberados', array(
+                'plan_id'  => $plan_id,
+                'released' => $released,
+                'error'    => $res['error'] ?? '',
+            ));
+        }
+
+        wp_send_json_success( array( 'marked' => $marked, 'released' => $released ) );
     }
 
     // ── Insertar/actualizar eventos al generar link de conductor ─────────────
@@ -1810,27 +1831,15 @@ class Woo_Delivery_Groups {
             ));
         }
 
-        // Liberar el pedido de su ruta en el acto: queda sin asignar y disponible
-        // para la planificación del día siguiente, sin pasos manuales. Conserva su
-        // estado (en-ruta-pendiente) y sus metas _wdg_partial / _wdg_not_delivered;
-        // solo se limpian las metas de ruta. El evento de analítica ya quedó escrito
-        // arriba, así que la trazabilidad del plan no se pierde.
-        $released = false;
-        if ( $plan_id ) {
-            $res      = $this->release_orders_from_plan( $plan_id, array($order_id) );
-            $released = empty($res['error']) && ! empty($res['removed']);
-            $this->log( $released ? 'OK' : 'WARN', 'partial_order: liberación de la ruta', array(
-                'order_id' => $order_id,
-                'plan_id'  => $plan_id,
-                'released' => $released,
-                'error'    => $res['error'] ?? '',
-            ));
-        }
+        // NO se libera aquí. Sacar el pedido de la ruta con el reparto en curso
+        // reconstruye el grupo y reescribe el token, dejando las posiciones del
+        // teléfono del conductor desfasadas respecto a las del servidor. La
+        // liberación ocurre al cerrar la ruta (ajax_finish_route), cuando ya nadie
+        // está trabajando sobre ella.
 
         wp_send_json_success( array(
             'order_id' => $order_id,
             'status'   => $order->get_status(),
-            'released' => $released,
         ));
     }
 
@@ -1840,6 +1849,7 @@ class Woo_Delivery_Groups {
     public function ajax_sync_progress() {
         $token    = sanitize_text_field( $_POST['token']    ?? '' );
         $done_raw = sanitize_text_field( $_POST['done']     ?? '{}' );
+        $ids_raw  = sanitize_text_field( $_POST['done_ids'] ?? '' );
 
         if ( empty($token) ) { wp_send_json_error('Token requerido'); }
 
@@ -1856,14 +1866,35 @@ class Woo_Delivery_Groups {
         $payload['last_update'] = time();
         update_option( 'wdg_route_' . $token, $payload );
 
-        // Guardar entrega en meta del pedido WooCommerce (persiste entre días)
-        $orders = $payload['group']['orders'] ?? array();
-        foreach ( $done as $idx => $is_done ) {
+        // Guardar entrega en meta del pedido WooCommerce (persiste entre días).
+        //
+        // El teléfono manda 'done_ids' (id de pedido → estado). Se prefiere sobre
+        // 'done', que va indexado por POSICIÓN: si la ruta se reconstruyó desde que
+        // el conductor cargó la página, esas posiciones ya no corresponden y se
+        // marcaría como entregado un pedido equivocado. 'done' queda solo como
+        // respaldo para páginas viejas que aún no mandan los ids.
+        $orders    = $payload['group']['orders'] ?? array();
+        $done_ids  = $ids_raw !== '' ? json_decode( stripslashes($ids_raw), true ) : null;
+        $by_id     = is_array($done_ids);
+
+        $entries = array();
+        if ( $by_id ) {
+            foreach ( $done_ids as $oid => $is_done ) { $entries[ intval($oid) ] = $is_done; }
+        } else {
+            foreach ( $done as $idx => $is_done ) {
+                $oid = intval( $orders[ intval($idx) ]['id'] ?? 0 );
+                if ( $oid ) $entries[$oid] = $is_done;
+            }
+        }
+
+        // Solo se aceptan pedidos que sigan en esta ruta
+        $ids_en_ruta = array_map( 'intval', array_column( $orders, 'id' ) );
+
+        foreach ( $entries as $order_id => $is_done ) {
             // Solo el estado "entregado" (true) marca entrega. Las paradas
             // 'visited' (parcial / no entregado) NO se marcan como entregadas.
             if ( $is_done !== true ) continue;
-            $order_id = intval( $orders[ intval($idx) ]['id'] ?? 0 );
-            if ( ! $order_id ) continue;
+            if ( ! $order_id || ! in_array( $order_id, $ids_en_ruta, true ) ) continue;
             $order = wc_get_order( $order_id );
             if ( ! $order ) continue;
             // Solo marcar si no estaba ya marcado
@@ -4064,10 +4095,20 @@ function saveDone() {
     try { localStorage.setItem('wdg_done_<?php echo md5($orders_json); ?>', JSON.stringify(done)); } catch(e){}
     // Sincronizar progreso al servidor
     if (ROUTE_TOKEN && WP_AJAX) {
+        // Además de las posiciones, mandar el progreso por ID de pedido. Si la ruta
+        // se reconstruyó en el servidor desde que cargó esta página, las posiciones
+        // ya no coinciden y marcarían el pedido equivocado; los ids no fallan.
+        var doneIds = {};
+        for (var i = 0; i < ORDERS.length; i++) {
+            if (ORDERS[i] && ORDERS[i].id && typeof done[i] !== 'undefined') {
+                doneIds[ORDERS[i].id] = done[i];
+            }
+        }
         var fd = new FormData();
-        fd.append('action', 'wdg_sync_progress');
-        fd.append('token',  ROUTE_TOKEN);
-        fd.append('done',   JSON.stringify(done));
+        fd.append('action',   'wdg_sync_progress');
+        fd.append('token',    ROUTE_TOKEN);
+        fd.append('done',     JSON.stringify(done));
+        fd.append('done_ids', JSON.stringify(doneIds));
         fetch(WP_AJAX, {method:'POST', body:fd})
             .then(function(r){ return r.json(); })
             .then(function(data){ console.log('[WDG] sync_progress:', data); })
